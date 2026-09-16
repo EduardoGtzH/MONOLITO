@@ -1,0 +1,211 @@
+# Las claves que empiezan con x- son campos de extension: Compose las ignora
+# al levantar servicios, y sirven para declarar bloques reutilizables.
+x-db-env: &db-env
+  DB_HOST: ${POSTGRES_HOST}
+  DB_PORT: ${POSTGRES_PORT}
+  DB_USER: ${POSTGRES_USER}
+  DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+x-servicio-base: &servicio-base
+  restart: unless-stopped
+  depends_on:
+    db:
+      condition: service_healthy
+  networks:
+    - red_inscripciones
+
+services:
+
+  # ---------------------------------------------------------------- BASE DE DATOS
+  db:
+    image: postgres:16-alpine
+    container_name: inscripciones_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - red_inscripciones
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------- ALUMNOS
+  alumnos-1:
+    <<: *servicio-base
+    build: ./services/alumnos
+    image: inscripciones/alumnos:latest
+    container_name: alumnos-1
+    environment:
+      <<: *db-env
+      INSTANCE_ID: alumnos-1
+      DB_NAME: alumnos_db
+    ports:
+      - "8081:8080"
+
+  alumnos-2:
+    <<: *servicio-base
+    build: ./services/alumnos
+    image: inscripciones/alumnos:latest
+    container_name: alumnos-2
+    environment:
+      <<: *db-env
+      INSTANCE_ID: alumnos-2
+      DB_NAME: alumnos_db
+    ports:
+      - "8082:8080"
+
+  alumnos-3:
+    <<: *servicio-base
+    build: ./services/alumnos
+    image: inscripciones/alumnos:latest
+    container_name: alumnos-3
+    environment:
+      <<: *db-env
+      INSTANCE_ID: alumnos-3
+      DB_NAME: alumnos_db
+    ports:
+      - "8083:8080"
+
+  # ---------------------------------------------------------------- MATERIAS
+  materias-1:
+    <<: *servicio-base
+    build: ./services/materias
+    image: inscripciones/materias:latest
+    container_name: materias-1
+    environment:
+      <<: *db-env
+      INSTANCE_ID: materias-1
+      DB_NAME: materias_db
+    ports:
+      - "8091:8080"
+
+  materias-2:
+    <<: *servicio-base
+    build: ./services/materias
+    image: inscripciones/materias:latest
+    container_name: materias-2
+    environment:
+      <<: *db-env
+      INSTANCE_ID: materias-2
+      DB_NAME: materias_db
+    ports:
+      - "8092:8080"
+
+  materias-3:
+    <<: *servicio-base
+    build: ./services/materias
+    image: inscripciones/materias:latest
+    container_name: materias-3
+    environment:
+      <<: *db-env
+      INSTANCE_ID: materias-3
+      DB_NAME: materias_db
+    ports:
+      - "8093:8080"
+
+  # ---------------------------------------------------------------- INSCRIPCIONES
+  # ALUMNOS_URL y MATERIAS_URL siguen apuntando a una instancia fija. Eso se
+  # arregla en el siguiente paso, cuando apunten al load balancer.
+  inscripciones-1:
+    <<: *servicio-base
+    build: ./services/inscripciones
+    image: inscripciones/inscripciones:latest
+    container_name: inscripciones-1
+    environment:
+      <<: *db-env
+      INSTANCE_ID: inscripciones-1
+      DB_NAME: inscripciones_db
+      ALUMNOS_URL: http://loadbalancer:8000
+      MATERIAS_URL: http://loadbalancer:8000
+    ports:
+      - "8101:8080"
+
+  inscripciones-2:
+    <<: *servicio-base
+    build: ./services/inscripciones
+    image: inscripciones/inscripciones:latest
+    container_name: inscripciones-2
+    environment:
+      <<: *db-env
+      INSTANCE_ID: inscripciones-2
+      DB_NAME: inscripciones_db
+      ALUMNOS_URL: http://loadbalancer:8000
+      MATERIAS_URL: http://loadbalancer:8000
+    ports:
+      - "8102:8080"
+
+  inscripciones-3:
+    <<: *servicio-base
+    build: ./services/inscripciones
+    image: inscripciones/inscripciones:latest
+    container_name: inscripciones-3
+    environment:
+      <<: *db-env
+      INSTANCE_ID: inscripciones-3
+      DB_NAME: inscripciones_db
+      ALUMNOS_URL: http://loadbalancer:8000
+      MATERIAS_URL: http://loadbalancer:8000
+    ports:
+      - "8103:8080"
+
+  # ---------------------------------------------------------------- MIDDLEWARE
+  middleware:
+    build: ./middleware
+    container_name: middleware
+    restart: unless-stopped
+    environment:
+      PUERTO: "8500"
+      ROUTES_FILE: /app/routes.json
+    volumes:
+      - ./middleware/routes.json:/app/routes.json:ro
+    ports:
+      - "8500:8500"
+    networks:
+      - red_inscripciones
+
+  # ---------------------------------------------------------------- LOAD BALANCER
+  loadbalancer:
+    build: ./loadbalancer
+    container_name: loadbalancer
+    restart: unless-stopped
+    environment:
+      MIDDLEWARE_URL: http://middleware:8500
+      PUERTO: "8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - middleware
+    networks:
+      - red_inscripciones
+
+  # ---------------------------------------------------------------- FRONTEND
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # localhost porque quien hace las peticiones es el navegador del
+        # usuario, no este contenedor.
+        VITE_API_URL: http://localhost:8000
+    container_name: frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - loadbalancer
+    networks:
+      - red_inscripciones
+volumes:
+  pgdata:
+
+networks:
+  red_inscripciones:
+    driver: bridge

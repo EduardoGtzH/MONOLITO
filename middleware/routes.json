@@ -1,0 +1,28 @@
+{
+  "servicios": {
+    "alumnos": {
+      "prefijos": ["/alumnos"],
+      "instancias": [
+        "http://alumnos-1:8080",
+        "http://alumnos-2:8080",
+        "http://alumnos-3:8080"
+      ]
+    },
+    "materias": {
+      "prefijos": ["/materias", "/grupos"],
+      "instancias": [
+        "http://materias-1:8080",
+        "http://materias-2:8080",
+        "http://materias-3:8080"
+      ]
+    },
+    "inscripciones": {
+      "prefijos": ["/inscripciones"],
+      "instancias": [
+        "http://inscripciones-1:8080",
+        "http://inscripciones-2:8080",
+        "http://inscripciones-3:8080"
+      ]
+    }
+  }
+}
