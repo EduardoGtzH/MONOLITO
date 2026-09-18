@@ -1,8 +1,6 @@
 # Sistema Distribuido de Inscripción de Materias
 
-Proyecto final de Cómputo Distribuido. Sistema de inscripción universitaria construido
-como microservicios en Go, con service discovery, balanceo de carga y detección
-automática de fallos.
+Proyecto final de Cómputo Distribuido. Sistema de inscripción UP
 
 **13 contenedores:** 1 frontend, 1 load balancer, 1 middleware, 9 instancias de servicio
 (3 por cada uno) y 1 base de datos.
