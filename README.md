@@ -55,8 +55,8 @@ El script de instalación instala Docker automáticamente si no está presente.
 ## Instalación y ejecución
 
 ```bash
-git clone https://github.com/USUARIO/REPOSITORIO.git
-cd REPOSITORIO
+git clone https://github.com/EduardoGtzH/MONOLITO/
+cd MONOLITO
 chmod +x setup.sh demo.sh
 ./setup.sh
 ```
