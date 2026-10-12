@@ -27,7 +27,7 @@ services:
       POSTGRES_DB: postgres
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./db/init:/docker-entrypoint-initdb.d:ro,z
     ports:
       - "5432:5432"
     networks:
@@ -166,7 +166,7 @@ services:
       PUERTO: "8500"
       ROUTES_FILE: /app/routes.json
     volumes:
-      - ./middleware/routes.json:/app/routes.json:ro
+      - ./middleware/routes.json:/app/routes.json:ro,z
     ports:
       - "8500:8500"
     networks:
@@ -203,6 +203,29 @@ services:
       - loadbalancer
     networks:
       - red_inscripciones
+
+  # ---------------------------------------------------------------- NGINX GATEWAY
+  nginx-gateway:
+    build: ./nginx-gateway
+    container_name: nginx-gateway
+    restart: unless-stopped
+    ports:
+      - "8200:8000"
+    # nginx resuelve los nombres de los upstream AL ARRANCAR. Si una
+    # instancia no existe todavía, falla con "host not found in upstream".
+    depends_on:
+      - alumnos-1
+      - alumnos-2
+      - alumnos-3
+      - materias-1
+      - materias-2
+      - materias-3
+      - inscripciones-1
+      - inscripciones-2
+      - inscripciones-3
+    networks:
+      - red_inscripciones
+
 volumes:
   pgdata:
 
