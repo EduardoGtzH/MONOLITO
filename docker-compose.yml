@@ -124,8 +124,8 @@ services:
       <<: *db-env
       INSTANCE_ID: inscripciones-1
       DB_NAME: inscripciones_db
-      ALUMNOS_URL: http://loadbalancer:8000
-      MATERIAS_URL: http://loadbalancer:8000
+      ALUMNOS_URL: http://nginx-gateway:8000
+      MATERIAS_URL: http://nginx-gateway:8000
     ports:
       - "8101:8080"
 
@@ -138,8 +138,8 @@ services:
       <<: *db-env
       INSTANCE_ID: inscripciones-2
       DB_NAME: inscripciones_db
-      ALUMNOS_URL: http://loadbalancer:8000
-      MATERIAS_URL: http://loadbalancer:8000
+      ALUMNOS_URL: http://nginx-gateway:8000
+      MATERIAS_URL: http://nginx-gateway:8000
     ports:
       - "8102:8080"
 
@@ -152,8 +152,8 @@ services:
       <<: *db-env
       INSTANCE_ID: inscripciones-3
       DB_NAME: inscripciones_db
-      ALUMNOS_URL: http://loadbalancer:8000
-      MATERIAS_URL: http://loadbalancer:8000
+      ALUMNOS_URL: http://nginx-gateway:8000
+      MATERIAS_URL: http://nginx-gateway:8000
     ports:
       - "8103:8080"
 
@@ -181,7 +181,7 @@ services:
       MIDDLEWARE_URL: http://middleware:8500
       PUERTO: "8000"
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       - middleware
     networks:
@@ -210,7 +210,7 @@ services:
     container_name: nginx-gateway
     restart: unless-stopped
     ports:
-      - "8200:8000"
+      - "8000:8000"
     # nginx resuelve los nombres de los upstream AL ARRANCAR. Si una
     # instancia no existe todavía, falla con "host not found in upstream".
     depends_on:

@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 #
 # setup.sh — instala dependencias y levanta el sistema completo.
+# Soporta familias Debian (apt) y RHEL (dnf).
 # Uso:  ./setup.sh          instala si falta y levanta
 #       ./setup.sh --limpio borra volúmenes y reconstruye desde cero
 #
 set -euo pipefail
-
-# set -e corta al primer error, -u truena si usas una variable no definida,
-# y -o pipefail hace que un pipe falle si cualquier etapa falla, no solo la
-# última. Sin esto un error a media instalación pasaría desapercibido.
 
 ROJO='\033[0;31m'; VERDE='\033[0;32m'; AZUL='\033[0;34m'; AMARILLO='\033[1;33m'; NC='\033[0m'
 paso()  { echo -e "\n${AZUL}==> $1${NC}"; }
@@ -21,12 +18,41 @@ cd "$(dirname "$0")"
 LIMPIO=false
 [[ "${1:-}" == "--limpio" ]] && LIMPIO=true
 
+# ---------------------------------------------------------------- 0. Sistema
+paso "Detectando el sistema"
+
+if [[ ! -f /etc/os-release ]]; then
+    error "No se pudo identificar la distribución."
+fi
+. /etc/os-release
+
+# ID_LIKE agrupa derivadas: Kali y Ubuntu dicen "debian", Rocky y Alma
+# dicen "rhel fedora". Revisamos ambos campos porque Debian y Fedora
+# puros no traen ID_LIKE.
+FAMILIA="desconocida"
+case " ${ID:-} ${ID_LIKE:-} " in
+    *" debian "*|*" ubuntu "*) FAMILIA="debian" ;;
+    *" rhel "*|*" fedora "*|*" centos "*) FAMILIA="rhel" ;;
+esac
+
+ok "${PRETTY_NAME:-$ID} (familia: $FAMILIA)"
+[[ "$FAMILIA" == "desconocida" ]] && \
+    aviso "Distribución no reconocida: instala Docker a mano si falla."
+
 # ---------------------------------------------------------------- 1. Docker
 paso "Verificando Docker"
 
-if ! command -v docker &> /dev/null; then
-    aviso "Docker no está instalado. Instalando..."
+# podman-docker instala un /usr/bin/docker que en realidad llama a Podman.
+# Hay que detectarlo, porque pasa la prueba de `command -v docker` pero no
+# construye las imágenes locales del proyecto.
+ES_PODMAN=false
+if command -v docker &> /dev/null; then
+    if docker --version 2>&1 | grep -qi podman; then
+        ES_PODMAN=true
+    fi
+fi
 
+instalar_docker_debian() {
     sudo apt update
     sudo apt install -y ca-certificates curl gnupg git
 
@@ -44,6 +70,45 @@ https://download.docker.com/linux/debian bookworm stable" \
     sudo apt update
     sudo apt install -y docker-ce docker-ce-cli containerd.io \
         docker-buildx-plugin docker-compose-plugin
+}
+
+instalar_docker_rhel() {
+    # El shim de Podman es dueño de /usr/bin/docker y choca con docker-ce-cli.
+    if rpm -q podman-docker &> /dev/null; then
+        aviso "Quitando podman-docker (Podman en sí se conserva)"
+        sudo dnf remove -y podman-docker
+    fi
+
+    sudo dnf install -y git
+
+    # Se escribe el .repo directamente en lugar de usar config-manager,
+    # porque dnf5 (Rocky 10, Fedora 41+) cambió su sintaxis. $releasever
+    # y $basearch los expande dnf, por eso van literales.
+    sudo tee /etc/yum.repos.d/docker-ce.repo > /dev/null << 'REPO'
+[docker-ce-stable]
+name=Docker CE Stable - $basearch
+baseurl=https://download.docker.com/linux/centos/$releasever/$basearch/stable
+enabled=1
+gpgcheck=1
+gpgkey=https://download.docker.com/linux/centos/gpg
+REPO
+
+    sudo dnf install -y docker-ce docker-ce-cli containerd.io \
+        docker-buildx-plugin docker-compose-plugin
+}
+
+if ! command -v docker &> /dev/null || $ES_PODMAN; then
+    if $ES_PODMAN; then
+        aviso "El comando 'docker' es un alias de Podman. Instalando Docker real..."
+    else
+        aviso "Docker no está instalado. Instalando..."
+    fi
+
+    case "$FAMILIA" in
+        debian) instalar_docker_debian ;;
+        rhel)   instalar_docker_rhel ;;
+        *)      error "Instala Docker manualmente: https://docs.docker.com/engine/install/" ;;
+    esac
 
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
@@ -64,7 +129,22 @@ if ! docker info &> /dev/null; then
 fi
 ok "Daemon accesible"
 
-# ---------------------------------------------------------------- 2. Variables
+# ---------------------------------------------------------------- 2. SELinux
+paso "Verificando SELinux"
+
+if command -v getenforce &> /dev/null && [[ "$(getenforce)" == "Enforcing" ]]; then
+    # Los bind mounts del compose llevan la opción ':z' para que Docker
+    # reetiquete los archivos. Sin ella, Postgres no podría leer db/init.
+    if grep -q ",z" docker-compose.yml; then
+        ok "SELinux activo y los volúmenes llevan la etiqueta ':z'"
+    else
+        aviso "SELinux activo pero los volúmenes no llevan ':z'. Puede fallar."
+    fi
+else
+    ok "SELinux inactivo o ausente"
+fi
+
+# ---------------------------------------------------------------- 3. Variables
 paso "Configurando variables de entorno"
 
 if [[ ! -f .env ]]; then
@@ -74,10 +154,10 @@ else
     ok "Archivo .env ya existe"
 fi
 
-# ---------------------------------------------------------------- 3. Puertos
+# ---------------------------------------------------------------- 4. Puertos
 paso "Verificando puertos"
 
-PUERTOS=(3000 8000 8500 5432)
+PUERTOS=(3000 8000 8001 8500 5432)
 OCUPADOS=()
 for p in "${PUERTOS[@]}"; do
     if ss -ltn 2>/dev/null | grep -q ":$p "; then
@@ -92,7 +172,7 @@ else
     ok "Puertos libres"
 fi
 
-# ---------------------------------------------------------------- 4. Levantar
+# ---------------------------------------------------------------- 5. Levantar
 if $LIMPIO; then
     paso "Limpieza total (se borran los datos)"
     docker compose down -v --remove-orphans || true
@@ -103,11 +183,11 @@ paso "Construyendo imágenes (la primera vez tarda varios minutos)"
 docker compose build
 ok "Imágenes listas"
 
-paso "Levantando los 13 contenedores"
+paso "Levantando los 14 contenedores"
 docker compose up -d
 ok "Contenedores arrancados"
 
-# ---------------------------------------------------------------- 5. Esperar
+# ---------------------------------------------------------------- 6. Esperar
 paso "Esperando a que el sistema esté sano"
 
 esperar() {
@@ -123,7 +203,8 @@ esperar() {
 }
 
 esperar "http://localhost:8500/heartbeat" "Middleware"
-esperar "http://localhost:8000/heartbeat" "Load balancer"
+esperar "http://localhost:8000/heartbeat" "nginx gateway"
+esperar "http://localhost:8001/heartbeat" "Load balancer de Go"
 esperar "http://localhost:8000/alumnos"   "Servicio de alumnos"
 esperar "http://localhost:8000/materias"  "Servicio de materias"
 esperar "http://localhost:3000"           "Frontend"
@@ -137,14 +218,18 @@ else
     aviso "Solo $SANAS de 9 instancias sanas. Espera unos segundos y revisa /status."
 fi
 
-# ---------------------------------------------------------------- 6. Resumen
+# ---------------------------------------------------------------- 7. Resumen
 echo -e "\n${VERDE}=============================================${NC}"
 echo -e "${VERDE}  Sistema listo${NC}"
 echo -e "${VERDE}=============================================${NC}"
-echo "  Frontend        http://localhost:3000"
-echo "  Load balancer   http://localhost:8000"
-echo "  Middleware      http://localhost:8500/status"
+echo "  Frontend              http://localhost:3000"
+echo "  nginx gateway         http://localhost:8000"
+echo "  Load balancer de Go   http://localhost:8001"
+echo "  Middleware            http://localhost:8500/status"
 echo ""
-echo "  Pruebas:  ./demo.sh"
-echo "  Apagar:   docker compose down"
+echo "  Verificación automática:  ./pruebas.sh"
+echo "  O prueba a mano:          abre http://localhost:3000"
+echo "  Endpoints documentados en README.md"
+echo ""
+echo "  Apagar:  docker compose down"
 echo ""
