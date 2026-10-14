@@ -74,6 +74,7 @@ func main() {
 	mux.HandleFunc("/inscripciones/", withInstanceHeader(controller.BajaHandler))
 	mux.HandleFunc("/heartbeat", withInstanceHeader(heartbeatHandler))
 
-	log.Printf("servicio %s escuchando en :8080", instanceID)
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	// El registro en Consul, el apagado limpio y el servidor viven en
+	// consul.go para que todo lo relacionado con discovery este junto.
+	servirConRegistro(mux)
 }

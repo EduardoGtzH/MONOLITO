@@ -1,20 +1,37 @@
 # Las claves que empiezan con x- son campos de extension: Compose las ignora
 # al levantar servicios, y sirven para declarar bloques reutilizables.
-x-db-env: &db-env
+x-env-comun: &env-comun
   DB_HOST: ${POSTGRES_HOST}
   DB_PORT: ${POSTGRES_PORT}
   DB_USER: ${POSTGRES_USER}
   DB_PASSWORD: ${POSTGRES_PASSWORD}
+  CONSUL_HTTP_ADDR: http://consul:8500
 
 x-servicio-base: &servicio-base
   restart: unless-stopped
   depends_on:
     db:
       condition: service_healthy
+    consul:
+      condition: service_started
   networks:
     - red_inscripciones
 
 services:
+
+  # ---------------------------------------------------------------- CONSUL
+  # Modo dev: un solo nodo, en memoria, sin ACLs y sin persistencia.
+  # Sirve para aprender la API y ver el discovery en vivo; en produccion
+  # serian 3 o 5 nodos con almacenamiento persistente.
+  consul:
+    image: hashicorp/consul:latest
+    container_name: consul
+    restart: unless-stopped
+    command: "agent -dev -client=0.0.0.0 -ui"
+    ports:
+      - "8500:8500"   # API HTTP + interfaz web en /ui
+    networks:
+      - red_inscripciones
 
   # ---------------------------------------------------------------- BASE DE DATOS
   db:
@@ -45,7 +62,7 @@ services:
     image: inscripciones/alumnos:latest
     container_name: alumnos-1
     environment:
-      <<: *db-env
+      <<: *env-comun
       INSTANCE_ID: alumnos-1
       DB_NAME: alumnos_db
     ports:
@@ -57,7 +74,7 @@ services:
     image: inscripciones/alumnos:latest
     container_name: alumnos-2
     environment:
-      <<: *db-env
+      <<: *env-comun
       INSTANCE_ID: alumnos-2
       DB_NAME: alumnos_db
     ports:
@@ -69,7 +86,7 @@ services:
     image: inscripciones/alumnos:latest
     container_name: alumnos-3
     environment:
-      <<: *db-env
+      <<: *env-comun
       INSTANCE_ID: alumnos-3
       DB_NAME: alumnos_db
     ports:
@@ -82,7 +99,7 @@ services:
     image: inscripciones/materias:latest
     container_name: materias-1
     environment:
-      <<: *db-env
+      <<: *env-comun
       INSTANCE_ID: materias-1
       DB_NAME: materias_db
     ports:
@@ -94,7 +111,7 @@ services:
     image: inscripciones/materias:latest
     container_name: materias-2
     environment:
-      <<: *db-env
+      <<: *env-comun
       INSTANCE_ID: materias-2
       DB_NAME: materias_db
     ports:
@@ -106,7 +123,7 @@ services:
     image: inscripciones/materias:latest
     container_name: materias-3
     environment:
-      <<: *db-env
+      <<: *env-comun
       INSTANCE_ID: materias-3
       DB_NAME: materias_db
     ports:
@@ -121,7 +138,7 @@ services:
     image: inscripciones/inscripciones:latest
     container_name: inscripciones-1
     environment:
-      <<: *db-env
+      <<: *env-comun
       INSTANCE_ID: inscripciones-1
       DB_NAME: inscripciones_db
       ALUMNOS_URL: http://nginx-gateway:8000
@@ -135,7 +152,7 @@ services:
     image: inscripciones/inscripciones:latest
     container_name: inscripciones-2
     environment:
-      <<: *db-env
+      <<: *env-comun
       INSTANCE_ID: inscripciones-2
       DB_NAME: inscripciones_db
       ALUMNOS_URL: http://nginx-gateway:8000
@@ -149,7 +166,7 @@ services:
     image: inscripciones/inscripciones:latest
     container_name: inscripciones-3
     environment:
-      <<: *db-env
+      <<: *env-comun
       INSTANCE_ID: inscripciones-3
       DB_NAME: inscripciones_db
       ALUMNOS_URL: http://nginx-gateway:8000
@@ -168,7 +185,7 @@ services:
     volumes:
       - ./middleware/routes.json:/app/routes.json:ro,z
     ports:
-      - "8500:8500"
+      - "8600:8500"
     networks:
       - red_inscripciones
 
