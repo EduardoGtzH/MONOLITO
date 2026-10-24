@@ -10,6 +10,7 @@ import (
 
 	"inscripciones.com/inscripciones/connectors"
 	"inscripciones.com/inscripciones/controllers"
+	"inscripciones.com/inscripciones/kafkax"
 	"inscripciones.com/inscripciones/models"
 
 	_ "github.com/lib/pq"
@@ -65,8 +66,17 @@ func main() {
 	log.Printf("alumnos en %s, materias en %s",
 		os.Getenv("ALUMNOS_URL"), os.Getenv("MATERIAS_URL"))
 
+	// Productor de Kafka. defer Close: al apagar, manda lo pendiente.
+	eventos := connectors.NewEventosConnector(kafkax.Brokers())
+	defer eventos.Close()
+	log.Printf("publicando eventos en kafka %v", kafkax.Brokers())
+
 	inscripcionModel := &models.InscripcionModel{DB: db}
-	proceso := &models.Proceso{Model: inscripcionModel, Connector: conector}
+	proceso := &models.Proceso{
+		Model:     inscripcionModel,
+		Connector: conector,
+		Eventos:   eventos,
+	}
 	controller := &controllers.InscripcionController{Proceso: proceso}
 
 	mux := http.NewServeMux()

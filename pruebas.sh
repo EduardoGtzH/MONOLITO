@@ -9,7 +9,7 @@ set -uo pipefail
 AZUL='\033[0;34m'; VERDE='\033[0;32m'; AMARILLO='\033[1;33m'; NC='\033[0m'
 NGINX="http://localhost:8000"    # puerta principal
 GOLB="http://localhost:8001"     # load balancer de Go, para comparar
-MW="http://localhost:8500"       # middleware
+MW="http://localhost:8600"       # middleware
 
 titulo() { echo -e "\n${AZUL}########## $1 ##########${NC}\n"; }
 pausa()  { echo -e "\n${AMARILLO}[Enter para continuar]${NC}"; read -r; }

@@ -1,0 +1,51 @@
+// Contrato gRPC del servicio de inscripciones.
+syntax = "proto3";
+
+package inscripciones;
+
+service InscripcionesService {
+  // Corre la cadena de validaciones (consultando por gRPC a alumnos y a
+  // materias), aparta el lugar y registra la inscripcion.
+  //   NOT_FOUND            el alumno o el grupo no existen
+  //   ALREADY_EXISTS       ya esta inscrito en ese grupo
+  //   FAILED_PRECONDITION  alumno inactivo, materia repetida, empalme o sin cupo
+  //   UNAVAILABLE          alumnos o materias no respondieron
+  rpc Inscribir(InscribirRequest) returns (Inscripcion);
+
+  // Inscripciones activas de un alumno.
+  rpc ListarInscripciones(ListarInscripcionesRequest) returns (ListarInscripcionesResponse);
+
+  // Da de baja una inscripcion y libera el lugar. NOT_FOUND si no existe.
+  rpc DarDeBaja(DarDeBajaRequest) returns (DarDeBajaResponse);
+}
+
+message Inscripcion {
+  int32  id            = 1;
+  string matricula     = 2;
+  int32  grupo_id      = 3;
+  string materia_clave = 4;
+  string estado        = 5;
+  string inscrito_en   = 6;
+}
+
+message InscribirRequest {
+  string matricula = 1;
+  int32  grupo_id  = 2;
+}
+
+message ListarInscripcionesRequest {
+  string matricula = 1;
+}
+
+message ListarInscripcionesResponse {
+  repeated Inscripcion inscripciones = 1;
+}
+
+message DarDeBajaRequest {
+  string matricula = 1;
+  int32  grupo_id  = 2;
+}
+
+message DarDeBajaResponse {
+  string estado = 1;
+}

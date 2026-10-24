@@ -2,9 +2,11 @@ package controllers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
+	"inscripciones.com/alumnos/connectors"
 	"inscripciones.com/alumnos/models"
 )
 
@@ -12,6 +14,7 @@ import (
 // the model, and writes the JSON response. No business logic, no SQL.
 type AlumnoController struct {
 	AlumnoModel *models.AlumnoModel
+	Eventos     *connectors.EventosConnector
 }
 
 // responderJSON is the "view" of this service: in an API the rendered view
@@ -52,6 +55,15 @@ func (c *AlumnoController) AlumnosHandler(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+
+		// El alumno ya esta guardado en la base. Si Kafka falla no se
+		// deshace el registro: se avisa en el log y se responde 201 igual.
+		err = c.Eventos.AlumnoRegistrado(alumno.Matricula, alumno.Nombre,
+			alumno.Carrera, alumno.Semestre)
+		if err != nil {
+			log.Printf("ADVERTENCIA: alumno %s guardado, pero Kafka no confirmo el evento (puede llegar tarde o perderse): %v",
+				alumno.Matricula, err)
 		}
 		responderJSON(w, http.StatusCreated, alumno)
 

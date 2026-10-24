@@ -3,15 +3,18 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"inscripciones.com/materias/connectors"
 	"inscripciones.com/materias/models"
 )
 
 type MateriaController struct {
 	MateriaModel *models.MateriaModel
+	Eventos      *connectors.EventosConnector
 }
 
 func responderJSON(w http.ResponseWriter, status int, payload interface{}) {
@@ -108,6 +111,15 @@ func (c *MateriaController) GrupoHandler(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			responderError(w, err)
 			return
+		}
+		// Esta peticion ocupo el ultimo lugar: se avisa por Kafka.
+		if grupo.CupoOcupado >= grupo.CupoMaximo {
+			err := c.Eventos.GrupoLleno(grupo.ID, grupo.MateriaClave,
+				grupo.Numero, grupo.CupoMaximo)
+			if err != nil {
+				log.Printf("ADVERTENCIA: grupo %d lleno, pero Kafka no confirmo el evento: %v",
+					grupo.ID, err)
+			}
 		}
 		responderJSON(w, http.StatusOK, grupo)
 

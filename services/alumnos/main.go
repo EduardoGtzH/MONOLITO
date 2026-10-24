@@ -8,7 +8,9 @@ import (
 	"os"
 	"time"
 
+	"inscripciones.com/alumnos/connectors"
 	"inscripciones.com/alumnos/controllers"
+	"inscripciones.com/alumnos/kafkax"
 	"inscripciones.com/alumnos/models"
 
 	_ "github.com/lib/pq"
@@ -66,9 +68,17 @@ func main() {
 	db := conectarDB(connStr)
 	defer db.Close()
 
+	// Productor de Kafka. defer Close: al apagar, manda lo pendiente.
+	eventos := connectors.NewEventosConnector(kafkax.Brokers())
+	defer eventos.Close()
+	log.Printf("publicando eventos en kafka %v", kafkax.Brokers())
+
 	// Wire up the MVC components.
 	alumnoModel := &models.AlumnoModel{DB: db}
-	alumnoController := &controllers.AlumnoController{AlumnoModel: alumnoModel}
+	alumnoController := &controllers.AlumnoController{
+		AlumnoModel: alumnoModel,
+		Eventos:     eventos,
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/alumnos", withInstanceHeader(alumnoController.AlumnosHandler))

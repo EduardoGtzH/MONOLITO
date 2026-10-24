@@ -8,12 +8,12 @@ import (
 var ErrInscripcionNoEncontrada = errors.New("inscripcion no encontrada")
 
 type Inscripcion struct {
-	ID            int    `json:"id"`
-	Matricula     string `json:"matricula"`
-	GrupoID       int    `json:"grupo_id"`
-	MateriaClave  string `json:"materia_clave"`
-	Estado        string `json:"estado"`
-	InscritoEn    string `json:"inscrito_en"`
+	ID           int    `json:"id"`
+	Matricula    string `json:"matricula"`
+	GrupoID      int    `json:"grupo_id"`
+	MateriaClave string `json:"materia_clave"`
+	Estado       string `json:"estado"`
+	InscritoEn   string `json:"inscrito_en"`
 }
 
 type InscripcionModel struct {
@@ -66,20 +66,24 @@ func (m *InscripcionModel) Create(matricula string, grupoID int, clave string) (
 
 // Baja marks an enrollment as dropped. It does not delete the row: keeping
 // the history is what lets the university audit who dropped what and when.
-func (m *InscripcionModel) Baja(matricula string, grupoID int) error {
+//
+// RETURNING devuelve la fila que se acaba de cambiar. El evento de baja
+// necesita el id y la materia, y asi no hace falta un SELECT aparte.
+func (m *InscripcionModel) Baja(matricula string, grupoID int) (*Inscripcion, error) {
+	i := Inscripcion{Matricula: matricula, GrupoID: grupoID}
 	query := `UPDATE inscripciones SET estado = 'DADA_DE_BAJA'
-	          WHERE matricula = $1 AND grupo_id = $2 AND estado = 'ACTIVA'`
+	          WHERE matricula = $1 AND grupo_id = $2 AND estado = 'ACTIVA'
+	          RETURNING id, materia_clave, estado,
+	                    TO_CHAR(inscrito_en, 'YYYY-MM-DD HH24:MI')`
 
-	res, err := m.DB.Exec(query, matricula, grupoID)
+	err := m.DB.QueryRow(query, matricula, grupoID).
+		Scan(&i.ID, &i.MateriaClave, &i.Estado, &i.InscritoEn)
 	if err != nil {
-		return err
+		// Sin fila que cambiar: no habia una inscripcion activa.
+		if err == sql.ErrNoRows {
+			return nil, ErrInscripcionNoEncontrada
+		}
+		return nil, err
 	}
-	filas, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if filas == 0 {
-		return ErrInscripcionNoEncontrada
-	}
-	return nil
+	return &i, nil
 }

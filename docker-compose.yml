@@ -6,6 +6,7 @@ x-env-comun: &env-comun
   DB_USER: ${POSTGRES_USER}
   DB_PASSWORD: ${POSTGRES_PASSWORD}
   CONSUL_HTTP_ADDR: http://consul:8500
+  KAFKA_BROKER: kafka:9092
 
 x-servicio-base: &servicio-base
   restart: unless-stopped
@@ -14,6 +15,8 @@ x-servicio-base: &servicio-base
       condition: service_healthy
     consul:
       condition: service_started
+    kafka-init:
+      condition: service_completed_successfully
   networks:
     - red_inscripciones
 
@@ -174,6 +177,28 @@ services:
     ports:
       - "8103:8080"
 
+  # ---------------------------------------------------------------- NOTIFICACIONES
+  # Solo consume de Kafka: no tiene base de datos y nginx no le manda
+  # trafico. Dos instancias en el mismo consumer group se reparten las
+  # particiones de cada topico.
+  notificaciones-1:
+    <<: *servicio-base
+    build: ./services/notificaciones
+    image: inscripciones/notificaciones:latest
+    container_name: notificaciones-1
+    environment:
+      <<: *env-comun
+      INSTANCE_ID: notificaciones-1
+
+  notificaciones-2:
+    <<: *servicio-base
+    build: ./services/notificaciones
+    image: inscripciones/notificaciones:latest
+    container_name: notificaciones-2
+    environment:
+      <<: *env-comun
+      INSTANCE_ID: notificaciones-2
+
   # ---------------------------------------------------------------- MIDDLEWARE
   middleware:
     build: ./middleware
@@ -240,6 +265,56 @@ services:
       - inscripciones-1
       - inscripciones-2
       - inscripciones-3
+    networks:
+      - red_inscripciones
+
+  # ---------------------------------------------------------------- KAFKA
+  # Un solo broker en modo KRaft: hace de broker y de controlador a la vez,
+  # sin ZooKeeper. Es la configuracion de kafka_example de la clase, salvo el
+  # listener anunciado: aqui los clientes son otros contenedores, asi que
+  # Kafka se anuncia como kafka:9092 en lugar de localhost:9092.
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Los topicos se crean a proposito en kafka-init, con 3 particiones.
+      # Sin esto, un consumidor que preguntara por un topico que todavia no
+      # existe lo crearia solo, y con una sola particion.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # Tope de memoria para la JVM, para que quepa en una maquina virtual.
+      KAFKA_HEAP_OPTS: "-Xmx512m"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
+    networks:
+      - red_inscripciones
+
+  # Contenedor de un solo uso: espera a que Kafka este sano, crea los
+  # topicos y termina. Que aparezca como "exited (0)" es lo normal.
+  kafka-init:
+    image: apache/kafka:3.8.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["bash", "/crear-topicos.sh"]
+    volumes:
+      - ./kafka/crear-topicos.sh:/crear-topicos.sh:ro,z
     networks:
       - red_inscripciones
 

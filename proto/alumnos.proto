@@ -1,0 +1,48 @@
+// Contrato gRPC del servicio de alumnos.
+//
+// Este archivo es la unica fuente de verdad de la API. No menciona Go:
+// cada servicio que lo usa genera su propio codigo a partir de el (ver
+// generar_proto.sh), igual que lo haria un cliente escrito en Python o Java.
+syntax = "proto3";
+
+package alumnos;
+
+service AlumnosService {
+  // Lista los alumnos activos.
+  rpc ListarAlumnos(ListarAlumnosRequest) returns (ListarAlumnosResponse);
+
+  // Busca un alumno por matricula. Es lo que consulta inscripciones antes
+  // de inscribir a alguien. NOT_FOUND si no existe.
+  rpc ObtenerAlumno(ObtenerAlumnoRequest) returns (Alumno);
+
+  // Registra un alumno nuevo. INVALID_ARGUMENT si faltan datos.
+  rpc CrearAlumno(CrearAlumnoRequest) returns (Alumno);
+}
+
+message Alumno {
+  int32  id                = 1;
+  string matricula         = 2;
+  string nombre            = 3;
+  string carrera           = 4;
+  int32  semestre          = 5;
+  int32  creditos_cursados = 6;
+  bool   activo            = 7;
+}
+
+message ListarAlumnosRequest {}
+
+message ListarAlumnosResponse {
+  repeated Alumno alumnos = 1;
+}
+
+message ObtenerAlumnoRequest {
+  string matricula = 1;
+}
+
+message CrearAlumnoRequest {
+  string matricula         = 1;
+  string nombre            = 2;
+  string carrera           = 3;
+  int32  semestre          = 4;
+  int32  creditos_cursados = 5;
+}

@@ -157,7 +157,7 @@ fi
 # ---------------------------------------------------------------- 4. Puertos
 paso "Verificando puertos"
 
-PUERTOS=(3000 8000 8001 8500 5432)
+PUERTOS=(3000 8000 8001 8500 8600 5432)
 OCUPADOS=()
 for p in "${PUERTOS[@]}"; do
     if ss -ltn 2>/dev/null | grep -q ":$p "; then
@@ -183,8 +183,12 @@ paso "Construyendo imágenes (la primera vez tarda varios minutos)"
 docker compose build
 ok "Imágenes listas"
 
-paso "Levantando los 14 contenedores"
+paso "Levantando los contenedores (kafka-init crea los topicos y termina)"
 docker compose up -d
+# nginx resuelve los nombres de los backends solo al arrancar. Si esta
+# corrida recreo o reinicio servicios, sus IPs pudieron cambiar y nginx
+# mandaria a las viejas: se reinicia para que las vuelva a leer.
+docker compose restart nginx-gateway > /dev/null
 ok "Contenedores arrancados"
 
 # ---------------------------------------------------------------- 6. Esperar
@@ -202,16 +206,28 @@ esperar() {
     error "$nombre no respondió tras $((intentos * 2))s. Revisa: docker compose logs"
 }
 
-esperar "http://localhost:8500/heartbeat" "Middleware"
+esperar "http://localhost:8500/v1/status/leader" "Consul"
+esperar "http://localhost:8600/heartbeat" "Middleware"
 esperar "http://localhost:8000/heartbeat" "nginx gateway"
 esperar "http://localhost:8001/heartbeat" "Load balancer de Go"
 esperar "http://localhost:8000/alumnos"   "Servicio de alumnos"
 esperar "http://localhost:8000/materias"  "Servicio de materias"
 esperar "http://localhost:3000"           "Frontend"
 
+# Kafka no habla HTTP: se le pregunta con sus propias herramientas, que
+# vienen dentro del contenedor. Si los servicios ya arrancaron, kafka-init
+# ya termino, porque dependen de el.
+TOPICOS=$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server localhost:9092 --list 2>/dev/null | grep -c "\." || true)
+if [[ "$TOPICOS" -ge 4 ]]; then
+    ok "Kafka con sus $TOPICOS topicos"
+else
+    error "Kafka no tiene los topicos. Revisa: docker compose logs kafka-init"
+fi
+
 # El middleware necesita un ciclo de heartbeat para marcar todo sano.
 sleep 6
-SANAS=$(curl -s http://localhost:8500/status | grep -oP '"sanas":\s*\K\d+' || echo 0)
+SANAS=$(curl -s http://localhost:8600/status | grep -oP '"sanas":\s*\K\d+' || echo 0)
 if [[ "$SANAS" == "9" ]]; then
     ok "Las 9 instancias están sanas"
 else
@@ -225,9 +241,11 @@ echo -e "${VERDE}=============================================${NC}"
 echo "  Frontend              http://localhost:3000"
 echo "  nginx gateway         http://localhost:8000"
 echo "  Load balancer de Go   http://localhost:8001"
-echo "  Middleware            http://localhost:8500/status"
+echo "  Consul                http://localhost:8500/ui"
+echo "  Middleware            http://localhost:8600/status"
+echo "  Kafka                 docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"
 echo ""
-echo "  Verificación automática:  ./pruebas.sh"
+echo "  Verificación automática:  ./pruebas.sh  y  ./pruebas_kafka.sh"
 echo "  O prueba a mano:          abre http://localhost:3000"
 echo "  Endpoints documentados en README.md"
 echo ""

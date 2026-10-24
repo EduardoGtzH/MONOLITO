@@ -1,0 +1,59 @@
+// Contrato gRPC del servicio de materias: catalogo, grupos y cupos.
+syntax = "proto3";
+
+package materias;
+
+service MateriasService {
+  // Catalogo completo, cada materia con sus grupos.
+  rpc ListarMaterias(ListarMateriasRequest) returns (ListarMateriasResponse);
+
+  // Una materia por clave. NOT_FOUND si no existe.
+  rpc ObtenerMateria(ObtenerMateriaRequest) returns (Materia);
+
+  // Un grupo por id. NOT_FOUND si no existe.
+  rpc ObtenerGrupo(GrupoRequest) returns (Grupo);
+
+  // Aparta un lugar dentro de una transaccion con SELECT ... FOR UPDATE:
+  // dos llamadas simultaneas al ultimo lugar no pueden pasar las dos.
+  // FAILED_PRECONDITION si el grupo ya esta lleno.
+  rpc ApartarLugar(GrupoRequest) returns (Grupo);
+
+  // Devuelve un lugar cuando un alumno se da de baja.
+  rpc LiberarLugar(GrupoRequest) returns (Grupo);
+}
+
+message Grupo {
+  int32  id            = 1;
+  int32  materia_id    = 2;
+  string materia_clave = 3;
+  string numero        = 4;
+  string profesor      = 5;
+  string dia           = 6;
+  string hora_inicio   = 7;
+  string hora_fin      = 8;
+  int32  cupo_maximo   = 9;
+  int32  cupo_ocupado  = 10;
+}
+
+message Materia {
+  int32          id       = 1;
+  string         clave    = 2;
+  string         nombre   = 3;
+  int32          creditos = 4;
+  string         carrera  = 5;
+  repeated Grupo grupos   = 6;
+}
+
+message ListarMateriasRequest {}
+
+message ListarMateriasResponse {
+  repeated Materia materias = 1;
+}
+
+message ObtenerMateriaRequest {
+  string clave = 1;
+}
+
+message GrupoRequest {
+  int32 id = 1;
+}

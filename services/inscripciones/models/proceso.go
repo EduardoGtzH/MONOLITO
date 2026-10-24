@@ -10,6 +10,7 @@ import (
 type Proceso struct {
 	Model     *InscripcionModel
 	Connector *connectors.ServiciosConnector
+	Eventos   *connectors.EventosConnector
 }
 
 // Inscribir runs the validation chain, claims the seat in the materias
@@ -43,16 +44,36 @@ func (p *Proceso) Inscribir(matricula string, grupoID int) (*Inscripcion, error)
 		}
 		return nil, err
 	}
+
+	// La inscripcion ya esta guardada. El evento es un aviso para quien le
+	// interese: si Kafka falla, la inscripcion no se deshace.
+	err = p.Eventos.InscripcionCreada(inscripcion.ID, matricula, grupoID,
+		inscripcion.MateriaClave)
+	if err != nil {
+		log.Printf("ADVERTENCIA: inscripcion %d guardada, pero Kafka no confirmo el evento (puede llegar tarde o perderse): %v",
+			inscripcion.ID, err)
+	}
 	return inscripcion, nil
 }
 
-// DarDeBaja marks the row as dropped and hands the seat back.
+// DarDeBaja marks the row as dropped. El lugar ya no se devuelve aqui con
+// una llamada HTTP: se publica inscripciones.canceladas, y materias, que es
+// el dueño de los cupos, lo devuelve cuando lee el evento.
+//
+// Ventaja: si materias esta caido, la baja no falla ni se pierde; el evento
+// espera en Kafka y se procesa cuando materias regresa. Costo: por un
+// instante el lugar todavia se ve ocupado (consistencia eventual).
 func (p *Proceso) DarDeBaja(matricula string, grupoID int) error {
-	if err := p.Model.Baja(matricula, grupoID); err != nil {
+	inscripcion, err := p.Model.Baja(matricula, grupoID)
+	if err != nil {
 		return err
 	}
-	if err := p.Connector.LiberarLugar(grupoID); err != nil {
-		log.Printf("ADVERTENCIA: baja registrada pero no se libero el lugar: %v", err)
+
+	err = p.Eventos.InscripcionCancelada(inscripcion.ID, matricula, grupoID,
+		inscripcion.MateriaClave)
+	if err != nil {
+		log.Printf("ADVERTENCIA: baja %d registrada, pero Kafka no confirmo el evento; si se perdio, el lugar no se devuelve: %v",
+			inscripcion.ID, err)
 	}
 	return nil
 }
