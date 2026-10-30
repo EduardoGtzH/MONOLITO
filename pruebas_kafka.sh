@@ -99,11 +99,11 @@ if ! asegurar_gateway; then
 fi
 
 # ---------------------------------------------------------------------------
-titulo "1. Topicos: 4, con 3 particiones cada uno"
+titulo "1. Topicos: 5, con 3 particiones cada uno"
 cmd "docker compose exec kafka $KBIN/kafka-topics.sh --bootstrap-server localhost:9092 --describe"
 desc=$(kafka kafka-topics.sh --describe 2>&1)
 grep -E "^Topic:" <<< "$desc" | awk '{print "    " $1, $2, $5, $6}'
-for t in alumnos.registrados inscripciones.creadas inscripciones.canceladas grupos.llenos; do
+for t in alumnos.registrados inscripciones.creadas inscripciones.canceladas grupos.llenos lugares.liberados; do
     n=$(grep -cE "Topic: $t[[:space:]]+Partition:" <<< "$desc")
     if [[ "$n" == 3 ]]; then pasa "$t: 3 particiones"; else falla "$t: $n particiones, se esperaban 3"; fi
 done
@@ -121,17 +121,17 @@ describe_grupo() {
     done
     echo "$out"
 }
-for g in materias notificaciones; do
+for g in materias inscripciones notificaciones; do
     cmd "docker compose exec kafka $KBIN/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group $g"
     tabla=$(describe_grupo "$g")
     awk -v g="$g" '$1 == "GROUP" || $1 == g {printf "    %-26s %-9s %-4s %s\n", $2, $3, $6, $NF}' <<< "$tabla"
     filas=$(awk -v g="$g" '$1 == g && $NF != "-"' <<< "$tabla" | wc -l)
     clientes=$(awk -v g="$g" '$1 == g && $NF != "-" {print $NF}' <<< "$tabla" | sort -u | tr '\n' ' ')
-    if [[ "$g" == materias ]]; then
-        esperadas=3; instancias=3
-    else
-        esperadas=12; instancias=2
-    fi
+    case "$g" in
+        materias)       esperadas=3;  instancias=3 ;;   # inscripciones.canceladas
+        inscripciones)  esperadas=3;  instancias=3 ;;   # lugares.liberados
+        notificaciones) esperadas=12; instancias=2 ;;   # 4 topicos x 3 particiones
+    esac
     if [[ "$filas" == "$esperadas" ]]; then
         pasa "$g: las $esperadas particiones tienen dueño"
     else
@@ -228,13 +228,13 @@ if [[ -n "$id" ]]; then
     else
         falla "el cupo cambio de $antes a $despues con un evento repetido"
     fi
-    # notificaciones recuerda los eventos en memoria, por instancia: si el
-    # duplicado cae en la otra, esa no lo conoce y manda el correo otra vez.
-    if [[ -n "$(lineas "evento $id repetido" "${NOTIF[@]}")" ]]; then
-        echo "    notificaciones: la misma instancia lo reconocio y no mando otro correo"
-    elif (( $(lineas "$MAT se dio de baja" "${NOTIF[@]}" | grep -c .) >= 2 )); then
-        echo "    notificaciones: cayo en la OTRA instancia, que no lo conocia, y mando"
-        echo "    el correo otra vez (su memoria es por instancia; ver Limitaciones en el README)"
+    # notificaciones tambien guarda el evento_id en su base (UNIQUE), asi que
+    # lo detecta sin importar cual de sus dos instancias lo reciba.
+    if espera_log "evento $id repetido" 15 "${NOTIF[@]}"; then
+        pasa "notificaciones tambien lo reconocio: no mando el aviso dos veces"
+        lineas "evento $id repetido" "${NOTIF[@]}" | sed 's/^/    /'
+    else
+        falla "notificaciones no reporto el duplicado en 15 s"
     fi
 else
     falla "no se encontro en Kafka el evento de baja de $MAT"
@@ -313,6 +313,59 @@ if asegurar_gateway; then
     pasa "nginx vuelve a llegar a las 3 instancias de materias"
 else
     falla "nginx no llega a materias despues de reiniciarlas"
+fi
+
+# ---------------------------------------------------------------------------
+titulo "9. Lista de espera: una baja mete al primero de la fila"
+# Cadena completa por Kafka:
+#   baja -> inscripciones.canceladas -> materias devuelve el lugar
+#        -> lugares.liberados -> inscripciones inscribe al primero de la fila
+#        -> inscripciones.creadas -> notificaciones avisa
+G=4   # TC2027-02: 2 lugares, viene lleno
+read -r ocupado maximo < <(curl -s "$GW/grupos/$G" | python3 -c \
+    "import sys,json; g=json.load(sys.stdin); print(g['cupo_ocupado'], g['cupo_maximo'])" 2>/dev/null)
+en_fila=$(curl -s "$GW/lista-espera?grupo_id=$G" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
+dueno=$(docker compose exec -T db psql -U "$PGUSER" -d inscripciones_db -Atc \
+    "SELECT matricula FROM inscripciones WHERE grupo_id = $G AND estado = 'ACTIVA' ORDER BY id LIMIT 1" 2>/dev/null | tr -d '\r')
+if [[ "$ocupado" != "$maximo" || "$en_fila" != 0 || -z "$dueno" ]]; then
+    echo "  [OMITIDA] el grupo $G no esta como viene sembrado (lleno y sin fila): $ocupado/$maximo, $en_fila en fila."
+    echo "            Con ./setup.sh --limpio vuelve a su estado inicial."
+else
+    cmd "curl -X POST $GW/lista-espera -d '{\"matricula\":\"$MAT\",\"grupo_id\":$G}'"
+    c=$(http -X POST "$GW/lista-espera" -H "Content-Type: application/json" \
+        -d "{\"matricula\":\"$MAT\",\"grupo_id\":$G}")
+    if [[ "$c" == 201 ]]; then pasa "$MAT formado en la fila del grupo $G (lleno)"; else falla "POST /lista-espera devolvio $c"; fi
+
+    cmd "curl -X DELETE $GW/inscripciones/$dueno/$G   (un inscrito se da de baja)"
+    http -X DELETE "$GW/inscripciones/$dueno/$G" > /dev/null
+    entro=""
+    for _ in $(seq 1 40); do
+        entro=$(curl -s "$GW/inscripciones?matricula=$MAT" | python3 -c \
+            "import sys,json; print(any(i['grupo_id'] == $G for i in json.load(sys.stdin)))" 2>/dev/null)
+        [[ "$entro" == True ]] && break
+        sleep 0.5
+    done
+    if [[ "$entro" == True ]]; then
+        pasa "$MAT entro solo al grupo $G, sin volver a pedirlo"
+        lineas "entro al grupo $G desde la lista de espera" inscripciones-1 inscripciones-2 inscripciones-3 | tail -1 | sed 's/^/    /'
+    else
+        falla "$MAT no entro al grupo $G en 20 s"
+    fi
+    if espera_log "$MAT quedo inscrito en TC2027 (grupo $G) desde la lista de espera" 15 "${NOTIF[@]}"; then
+        pasa "notificaciones le aviso que entro desde la lista de espera"
+    else
+        falla "no llego el aviso de la lista de espera"
+    fi
+
+    # Se deja el grupo como estaba: sale $MAT y regresa quien estaba.
+    http -X DELETE "$GW/inscripciones/$MAT/$G" > /dev/null
+    for _ in $(seq 1 40); do
+        [[ "$(cupo_db $G)" == $((maximo - 1)) ]] && break
+        sleep 0.5
+    done
+    c=$(http -X POST "$GW/inscripciones" -H "Content-Type: application/json" \
+        -d "{\"matricula\":\"$dueno\",\"grupo_id\":$G}")
+    echo "    restaurado: $dueno regresa al grupo $G ($c), $(cupo_db $G)/$maximo"
 fi
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,15 @@ CREATE TABLE alumnos (
 
 CREATE INDEX idx_alumnos_matricula ON alumnos(matricula);
 
+-- Historial academico: que materias ya aprobo cada alumno. Lo consulta
+-- inscripciones para validar los prerrequisitos. materia_clave no lleva
+-- FOREIGN KEY porque las materias viven en otra base (materias_db).
+CREATE TABLE materias_aprobadas (
+    matricula     VARCHAR(20) NOT NULL REFERENCES alumnos(matricula),
+    materia_clave VARCHAR(10) NOT NULL,
+    PRIMARY KEY (matricula, materia_clave)
+);
+
 INSERT INTO alumnos (matricula, nombre, carrera, semestre, creditos_cursados) VALUES
     ('A01234567', 'Ana Lucía Márquez',  'Ingeniería en Sistemas', 5, 180),
     ('A01234568', 'Bruno Hernández',    'Ingeniería en Sistemas', 3, 96),

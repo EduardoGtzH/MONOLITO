@@ -21,6 +21,7 @@ Cada entrega se acumula sobre la anterior; nada se reemplazó.
 | nginx | nginx como reverse proxy y load balancer, en su propio contenedor, entre el frontend y los servicios |
 | Consul | Registro y borrado automáticos en Consul, health checks, Consul en su propio contenedor |
 | Kafka | Cola de mensajería asíncrona: 4 tópicos, una cola (consumer group) por servicio que consume, servicio nuevo de notificaciones |
+| Mejoras de uso | Lista de espera (por Kafka), avisos visibles para el alumno, reglas nuevas (créditos, prerrequisitos, periodo), historial, frontend nuevo, 200 alumnos de prueba, `simulacro.sh` y `verificar_consistencia.sh` |
 
 ---
 
@@ -52,8 +53,8 @@ Cada entrega se acumula sobre la anterior; nada se reemplazó.
    Mensajería asíncrona (sección "Mensajería asíncrona con Kafka"):
 
      alumnos ───────┐                                   ┌──> materias x3 (devuelve lugares)
-     inscripciones ─┼──> Kafka  4 tópicos, 3 particiones┤
-     materias ──────┘    kafka:9092, solo en la red     └──> notificaciones x2
+     inscripciones ─┼──> Kafka  5 tópicos, 3 particiones┼──> inscripciones x3 (lista de espera)
+     materias ──────┘    kafka:9092, solo en la red     └──> notificaciones x2 (avisos)
 
    Service discovery (sección "Service discovery con Consul"):
 
@@ -67,7 +68,7 @@ Cada entrega se acumula sobre la anterior; nada se reemplazó.
                       └─────────┬─────────┘        │ health monitor   │
                                 │                  └────────┬─────────┘
                                 └──> mismo pool de           │ heartbeat
-                                     9 instancias  <─────────┘  cada 5s
+                                     11 instancias <─────────┘  cada 5s
 ```
 
 Las líneas continuas son tráfico real. Las punteadas son metadatos.
@@ -135,13 +136,13 @@ El script de instalación detecta la distribución e instala Docker si falta.
 ```bash
 git clone https://github.com/USUARIO/REPOSITORIO.git
 cd REPOSITORIO
-chmod +x setup.sh pruebas.sh pruebas_kafka.sh
+chmod +x setup.sh pruebas.sh pruebas_kafka.sh simulacro.sh verificar_consistencia.sh
 ./setup.sh
 ```
 
 El script detecta la familia del sistema, instala Docker, genera el `.env`, construye
 las imágenes, levanta los contenedores, revisa que Kafka tenga sus tópicos y espera a que
-las 9 instancias detrás de los gateways reporten sanas. La primera ejecución tarda varios
+las 11 instancias que vigila el middleware reporten sanas. La primera ejecución tarda varios
 minutos compilando.
 
 Para reconstruir desde cero borrando los datos:
@@ -149,6 +150,10 @@ Para reconstruir desde cero borrando los datos:
 ```bash
 ./setup.sh --limpio
 ```
+
+**Si vienes de una versión anterior del proyecto**, usa `--limpio` la primera vez: las
+mejoras agregan tablas, una base nueva (`notificaciones_db`) y los datos de prueba, y los
+scripts de `db/init` solo corren con el volumen de Postgres vacío.
 
 Una vez arriba:
 
@@ -162,6 +167,32 @@ Una vez arriba:
 | Kafka | sin puerto en el host: `docker compose exec kafka ...` (ver sección de Kafka) |
 
 Para apagar todo: `docker compose down`
+
+### Cómo se usa
+
+En http://localhost:3000 se elige un alumno y la pantalla muestra todo lo suyo:
+
+- **Horario** de la semana con sus materias, y el total de créditos.
+- **Catálogo**, con un buscador. Cada grupo dice si el alumno puede inscribirse y, si no,
+  por qué: *Inscrito*, *Empalma con TC1028*, *Requiere TC1028*, *Ya aprobada*, *Ya llevas
+  esta materia*. Si el grupo está lleno, el botón cambia a **Formarme** (lista de espera).
+- **Mis materias**, con un botón de baja que pide confirmación.
+- **Lista de espera**: en qué filas está formado y en qué lugar va, o por qué salió.
+- **Avisos**: los mensajes que le mandó el servicio de notificaciones. Si se libera un
+  lugar y el alumno era el primero de la fila, aquí aparece solo que ya quedó inscrito.
+- **Historial** (desplegable): todo lo que inscribió y dio de baja, con fechas.
+- **Coordinación** (desplegable): avisos de grupos que se llenaron.
+- **Bitácora de instancias**: qué contenedor contestó cada petición; ahí se ve el round
+  robin. Las consultas automáticas (cada 4 segundos) no se anotan, para no llenarla.
+
+Para probar las reglas con los alumnos originales:
+
+| Alumno | Qué demuestra |
+|---|---|
+| Ana (`A01234567`) | Inscribe TC1028-01 y luego mira TC2027-01: *Empalma con TC1028* (los dos son lunes en la mañana) |
+| Bruno (`A01234568`) | Ya aprobó TC1028, así que puede tomar TC2005 Sistemas Operativos; TC1028 sale como *Ya aprobada* |
+| Diego (`A01234570`) | Primer semestre: TC2005 sale como *Requiere TC1028* |
+| Cualquiera | TC2027-02 está lleno (2/2): **Formarme**, y en otra pestaña dar de baja a uno de sus inscritos |
 
 ### Notas por sistema
 
@@ -180,18 +211,24 @@ sistemas sin SELinux se ignora: el archivo sigue siendo portable.
 
 ```
 .
-├── db/init/                  Scripts SQL de inicialización
-│   ├── 01-crear-bases.sql
-│   ├── 02-alumnos.sql
-│   ├── 03-materias.sql
-│   └── 04-inscripciones.sql
+├── db/
+│   ├── generar_datos.py      Genera los datos de prueba (10-, 11- y 12-)
+│   └── init/                 Scripts SQL de inicialización, en orden
+│       ├── 01-crear-bases.sql
+│       ├── 02-alumnos.sql        tablas
+│       ├── 03-materias.sql
+│       ├── 04-inscripciones.sql
+│       ├── 05-notificaciones.sql
+│       ├── 10-datos-alumnos.sql  datos generados
+│       ├── 11-datos-materias.sql
+│       └── 12-datos-inscripciones.sql
 ├── kafka/
-│   └── crear-topicos.sh      Declara los 4 tópicos (lo ejecuta kafka-init)
+│   └── crear-topicos.sh      Declara los 5 tópicos (lo ejecuta kafka-init)
 ├── services/
-│   ├── alumnos/              Servicio de estudiantes
-│   ├── materias/             Catálogo, grupos y cupos
-│   ├── inscripciones/        Orquestación e inscripción
-│   └── notificaciones/       Solo consume eventos de Kafka
+│   ├── alumnos/              Servicio de estudiantes y materias aprobadas
+│   ├── materias/             Catálogo, grupos, cupos y prerrequisitos
+│   ├── inscripciones/        Orquestación, inscripción y lista de espera
+│   └── notificaciones/       Guarda y sirve los avisos que llegan por Kafka
 ├── nginx-gateway/            Reverse proxy + load balancer declarativo
 │   ├── nginx.conf
 │   └── Dockerfile
@@ -205,7 +242,9 @@ sistemas sin SELinux se ignora: el archivo sigue siendo portable.
 ├── docker-compose.yml
 ├── setup.sh                  Instalación y arranque automatizados
 ├── pruebas.sh                Verificación escenario por escenario
-└── pruebas_kafka.sh          Verificación de la mensajería con Kafka
+├── pruebas_kafka.sh          Verificación de la mensajería con Kafka
+├── simulacro.sh              "Día de inscripciones": 40 alumnos por 10 lugares
+└── verificar_consistencia.sh ¿Cuadran los datos entre las bases?
 ```
 
 Cada servicio sigue la misma estructura MVC:
@@ -293,8 +332,8 @@ inmediato, sin esperar a que falle el check. Si la instancia muere sin despedirs
 (`docker kill` manda `SIGKILL`, que no se puede capturar), su check pasa a `critical` y
 Consul la elimina sola al minuto por `DeregisterCriticalServiceAfter`.
 
-El servicio de notificaciones también se registra, aunque no tenga API: Consul vigila su
-`/heartbeat` igual que el de los demás.
+El servicio de notificaciones también se registra: Consul vigila su `/heartbeat` igual
+que el de los demás.
 
 ```bash
 # Instancias sanas de un servicio
@@ -335,6 +374,7 @@ propios tópicos los hechos que le pasan a él:
 | `inscripciones.creadas` | inscripciones | `POST /inscripciones` | matrícula | notificaciones |
 | `inscripciones.canceladas` | inscripciones | `DELETE /inscripciones/...` | matrícula | **materias**, notificaciones |
 | `grupos.llenos` | materias | se ocupa el último lugar de un grupo | id del grupo | notificaciones |
+| `lugares.liberados` | materias | **después** de devolver un lugar por una baja | id del grupo | **inscripciones** (lista de espera) |
 
 Una **cola** es un *consumer group*. Todas las instancias de un servicio entran a Kafka
 con el mismo nombre de grupo, y eso tiene dos efectos:
@@ -399,9 +439,14 @@ que procesarlo dos veces no debe cambiar el resultado. Para eso sirve `evento_id
   misma transacción en la que devuelve el lugar. Si el evento ya estaba, el `INSERT ... ON
   CONFLICT DO NOTHING` no inserta nada y el cupo no se toca. Como está en la base, funciona
   aunque el duplicado lo reciba otra de las tres instancias.
-- **notificaciones** recuerda los `evento_id` en memoria, igual que el
-  `inventory-service` de `kafka_example` de la clase. Es suficiente para un correo, pero
-  la memoria es de cada instancia (ver [Limitaciones conocidas](#limitaciones-conocidas)).
+- **notificaciones** guarda cada aviso en su propia base (`notificaciones_db`) con el
+  `evento_id` como `UNIQUE`. Un evento repetido no inserta nada, sin importar cuál de sus
+  dos instancias lo reciba. (En la entrega de Kafka lo recordaba en memoria, como el
+  `inventory-service` de `kafka_example`; al guardar los avisos para mostrarlos, la
+  memoria pasó a la base y se fue esa limitación.)
+- **inscripciones**, al promover la lista de espera, no necesita tabla: si
+  `lugares.liberados` llega dos veces, el segundo intento se encuentra con que el lugar ya
+  se ocupó (`materias` lo cuida con `FOR UPDATE`) y no inscribe a nadie de más.
 
 Si un handler falla, se reintenta hasta 3 veces, esperando un poco más cada vez. Un mensaje que no es JSON
 válido no se reintenta: nunca va a funcionar, así que se registra en el log y se sigue.
@@ -416,9 +461,10 @@ proyecto:
 | `kafkax/kafkax.go` | `NewWriter`, `Publish` y `Consume`: la envoltura de `segmentio/kafka-go` |
 | `events/events.go` | Nombres de tópicos y grupos, y los structs de los eventos |
 | `connectors/eventos_connector.go` | Productor del servicio: un método por evento que publica |
-| `controllers/eventos_controller.go` | (materias) Handler de `inscripciones.canceladas` |
-| `controllers/notificacion_controller.go` | (notificaciones) Handler de los 4 tópicos |
+| `controllers/eventos_controller.go` | (materias) Handler de `inscripciones.canceladas`; (inscripciones) handler de `lugares.liberados` |
+| `controllers/notificacion_controller.go` | (notificaciones) Handler de los 4 tópicos de avisos y la API `/notificaciones` |
 | `models/eventos_model.go` | (materias) `LiberarPorEvento` y la tabla `eventos_procesados` |
+| `models/lista_espera_model.go` | (inscripciones) La fila: formarse, posición, salir, el primero |
 
 El productor es un **connector** porque es una salida del servicio hacia otro sistema,
 igual que el cliente HTTP de `inscripciones`. El consumidor es un **controller** porque es
@@ -449,19 +495,21 @@ al momento.
 ./pruebas_kafka.sh
 ```
 
-Primero revisa que nginx mande cada ruta a su propio servicio (si no, lo reinicia; ver Solución de problemas). Después recorre ocho pruebas y reporta `[PASA]` o `[FALLA]` en cada comprobación:
+Primero revisa que nginx mande cada ruta a su propio servicio (si no, lo reinicia; ver Solución de problemas). Después recorre nueve pruebas y reporta `[PASA]` o `[FALLA]` en cada comprobación:
 
-1. Los 4 tópicos existen con 3 particiones
-2. Los dos consumer groups tienen todas sus particiones repartidas entre sus instancias
+1. Los 5 tópicos existen con 3 particiones
+2. Los tres consumer groups tienen todas sus particiones repartidas entre sus instancias
 3. Registrar un alumno llega a `notificaciones`
 4. Inscribir llega a `notificaciones`
 5. **Una baja la procesa una sola instancia de `materias`, y `notificaciones` recibe su
    propia copia** (cola + fan-out)
-6. **Idempotencia**: se vuelve a publicar el mismo evento de baja y el lugar no se devuelve
-   dos veces
+6. **Idempotencia**: se vuelve a publicar el mismo evento de baja; ni el lugar se devuelve
+   dos veces ni el aviso se manda dos veces
 7. Llenar un grupo publica `grupos.llenos`
 8. **Con las 3 instancias de `materias` apagadas, la baja responde 200**; el evento espera
    en la cola (se ve el `LAG`) y se procesa cuando `materias` regresa
+9. **Lista de espera**: un alumno se forma en un grupo lleno, alguien se da de baja y el
+   alumno queda inscrito solo, con su aviso. Al final el grupo queda como estaba
 
 Lo mismo a mano. Las herramientas de Kafka vienen dentro de su contenedor:
 
@@ -473,6 +521,7 @@ $K/kafka-topics.sh --bootstrap-server localhost:9092 --describe
 
 # Qué instancia tiene cada partición (columna CLIENT-ID) y cuántos eventos faltan (LAG)
 $K/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group materias
+$K/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group inscripciones
 $K/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group notificaciones
 
 # Ver los eventos de un tópico desde el principio (Ctrl+C para salir)
@@ -489,6 +538,45 @@ préndela otra vez y se vuelven a repartir.
 
 ---
 
+## Lista de espera
+
+Cuando un grupo está lleno, el alumno se puede formar (`POST /lista-espera`). Cuando se
+libera un lugar, el primero de la fila queda inscrito solo, sin volver a pedirlo:
+
+```
+ alumno da de baja ──> inscripciones.canceladas ──> materias devuelve el lugar
+                                                         │
+                                                         ▼
+ aviso al alumno <── inscripciones.creadas <── inscripciones inscribe al  <── lugares.liberados
+ ("se liberó un lugar     (desde_lista_espera)    primero de la fila
+  y quedaste inscrito")
+```
+
+Las decisiones que la hacen funcionar:
+
+- **`materias` publica `lugares.liberados` después de devolver el lugar, no antes.** Si
+  `inscripciones` reaccionara directo a `inscripciones.canceladas`, podría intentar apartar
+  el lugar antes de que `materias` lo devolviera, y encontraría el grupo todavía lleno.
+- **Nadie se adelanta a la fila.** Hay una regla nueva en la cadena (`validarSinFila`): si
+  hay alumnos esperando un grupo, inscribirse directo se rechaza con 409, salvo para el
+  primero de la fila. Sin ella, un lugar recién liberado se lo llevaría quien hiciera clic
+  más rápido.
+- **El orden es el de llegada.** La fila es una tabla en `inscripciones_db` (`lista_espera`)
+  y el orden es el `id`, que Postgres asigna en el orden en que se insertan las filas. Un
+  índice único impide formarse dos veces en el mismo grupo, aun si las dos peticiones caen
+  en instancias distintas.
+- **Al promover se pasa por la cadena completa.** Si mientras esperaba el alumno se
+  inscribió en otro grupo que ahora le empalma, o se pasaría de créditos, no entra: sale de
+  la fila con el motivo (`CANCELADA`, se ve en su pantalla) y el lugar pasa al siguiente.
+- **Una sola instancia atiende cada grupo.** `lugares.liberados` usa el id del grupo como
+  clave, así que todas las liberaciones de un grupo caen en la misma partición y las
+  procesa una instancia, una por una. Dos instancias nunca promueven la fila del mismo
+  grupo al mismo tiempo.
+
+Para verlo con muchos alumnos a la vez: `./simulacro.sh` (sección [Pruebas](#pruebas)).
+
+---
+
 ## API
 
 Todas las rutas se consumen a través de nginx en el puerto 8000. El load balancer de Go
@@ -499,14 +587,14 @@ sirve exactamente las mismas en el 8001.
 | Método | Ruta | Descripción |
 |---|---|---|
 | GET | `/alumnos` | Lista de alumnos activos |
-| GET | `/alumnos/{matricula}` | Un alumno |
+| GET | `/alumnos/{matricula}` | Un alumno, con las materias que ya aprobó (`aprobadas`) |
 | POST | `/alumnos` | Registra un alumno. Publica `alumnos.registrados` |
 
 ### Materias
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/materias` | Catálogo con grupos anidados |
+| GET | `/materias` | Catálogo con grupos anidados, créditos y prerrequisitos (`requiere`) |
 | GET | `/materias/{clave}` | Una materia con sus grupos |
 | GET | `/grupos/{id}` | Un grupo |
 | POST | `/grupos/{id}/apartar` | Aparta un lugar. Si era el último, publica `grupos.llenos` |
@@ -517,8 +605,20 @@ sirve exactamente las mismas en el 8001.
 | Método | Ruta | Descripción |
 |---|---|---|
 | GET | `/inscripciones?matricula=` | Inscripciones activas de un alumno |
+| GET | `/inscripciones?matricula=&historial=1` | Todas, también las dadas de baja (con `baja_en`) |
 | POST | `/inscripciones` | Inscribe. Cuerpo: `{"matricula":"...","grupo_id":N}`. Publica `inscripciones.creadas` |
 | DELETE | `/inscripciones/{matricula}/{grupo_id}` | Da de baja. Publica `inscripciones.canceladas`; el lugar lo devuelve `materias` al leer el evento |
+| POST | `/lista-espera` | Se forma en un grupo lleno. Cuerpo: `{"matricula":"...","grupo_id":N}`. Responde su posición |
+| GET | `/lista-espera?matricula=` | Dónde está formado un alumno (y en qué terminaron sus filas anteriores) |
+| GET | `/lista-espera?grupo_id=` | La fila actual de un grupo, en orden |
+| DELETE | `/lista-espera/{matricula}/{grupo_id}` | Se sale de la fila |
+
+### Notificaciones
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/notificaciones?matricula=` | Los avisos de un alumno, el más nuevo primero |
+| GET | `/notificaciones/coordinacion` | Avisos para coordinación (grupos que se llenaron) |
 
 ### Middleware (puerto 8600)
 
@@ -553,8 +653,8 @@ variables globales.
 
 ### Database per service
 
-Un contenedor de PostgreSQL con tres bases independientes: `alumnos_db`, `materias_db` e
-`inscripciones_db`. Ningún servicio consulta las tablas de otro.
+Un contenedor de PostgreSQL con cuatro bases independientes: `alumnos_db`, `materias_db`,
+`inscripciones_db` y `notificaciones_db`. Ningún servicio consulta las tablas de otro.
 
 La consecuencia es que la tabla `inscripciones` guarda `matricula` y `grupo_id` **sin
 FOREIGN KEY**: esas filas viven en otras bases y el motor no puede validarlas. La
@@ -563,20 +663,35 @@ más frágil que un JOIN, y ese es el costo real de los microservicios.
 
 ### Cadena de validaciones
 
-Inscribir no es un INSERT: son seis reglas independientes evaluadas en orden, en
+Inscribir no es un INSERT: son once reglas independientes evaluadas en orden, en
 `models/validador.go`. Cada una es una función con la misma firma, agrupadas en un slice
 que se recorre hasta la primera falla.
 
-1. El alumno existe y está activo (HTTP a `alumnos`, vía nginx)
-2. El grupo existe (HTTP a `materias`, vía nginx)
-3. No está ya inscrito en ese grupo (base local)
-4. No lleva otro grupo de la misma materia (base local)
-5. No hay empalme de horario (HTTP concurrente a `materias`, vía nginx)
-6. Hay cupo disponible
+1. **El periodo de inscripción está abierto** (solo compara la hora)
+2. El alumno existe y está activo (HTTP a `alumnos`, vía nginx)
+3. El grupo existe (HTTP a `materias`, vía nginx)
+4. **No aprobó ya esa materia** (las aprobadas vienen de `alumnos`)
+5. **Aprobó los prerrequisitos** (lo que pide la materia viene de `materias`; lo que aprobó, de `alumnos`)
+6. No está ya inscrito en ese grupo (base local)
+7. No lleva otro grupo de la misma materia (base local)
+8. No hay empalme de horario (HTTP concurrente a `materias`, vía nginx)
+9. **No se pasa del límite de créditos** (reutiliza los grupos que trajo la regla 8)
+10. **Nadie lo espera en la lista de espera**, salvo que él sea el primero
+11. Hay cupo disponible
 
-Agregar una regla es escribir una función y añadir una línea al slice. Las verificaciones
-locales y baratas van primero; la validación de empalme, que dispara N llamadas HTTP, va
-casi al final.
+Las reglas en negritas llegaron con las mejoras, y entraron justo como promete el diseño:
+una función y una línea en el slice cada una, sin tocar las demás. La de prerrequisitos es
+un buen ejemplo de por qué la cadena vive en `inscripciones`: necesita datos de dos
+servicios a la vez, y ninguno de los dos podría validarla solo.
+
+Formarse en la lista de espera usa casi la misma cadena (`cadenaFila`): si el alumno no
+podría inscribirse, tampoco tiene sentido que espere un lugar. Cambian las dos últimas
+reglas: para formarse, el grupo **no** debe tener lugar.
+
+El límite de créditos y el periodo se configuran en `docker-compose.yml`, en el bloque
+`x-reglas-inscripcion` (`MAX_CREDITOS`, `INSCRIPCION_INICIO`, `INSCRIPCION_FIN`). Para
+probar el rechazo por periodo, pon una fecha ya pasada en `INSCRIPCION_FIN` y recrea
+inscripciones: `docker compose up -d inscripciones-1 inscripciones-2 inscripciones-3`.
 
 Como `inscripciones` llama a los otros servicios a través de nginx, **una sola petición de
 usuario genera cuatro o más entradas en el log del gateway**. Se ve corriendo
@@ -652,8 +767,8 @@ no la de servir. nginx ni se entera, porque sus upstreams son estáticos.
 
 ### Instancias sin estado
 
-Ninguna instancia de alumnos, materias o inscripciones guarda datos en memoria. Todo el
-estado vive en PostgreSQL, y por eso da igual cuál de las tres atienda una petición. Sin
+Ninguna instancia guarda datos en memoria. Todo el estado vive en PostgreSQL (también los
+avisos y la lista de espera), y por eso da igual cuál de las tres atienda una petición. Sin
 esa propiedad, el balanceo sería imposible. La posición de cada consumidor en Kafka
 tampoco vive en la instancia: el offset confirmado lo guarda Kafka, por eso otra instancia
 puede seguir exactamente donde se quedó la que se apagó.
@@ -663,9 +778,44 @@ puede seguir exactamente donde se quedó la que se apagó.
 ## Pruebas
 
 ```bash
-./pruebas.sh          # gateways, balanceo, failover, validaciones
-./pruebas_kafka.sh    # mensajería asíncrona (ver sección de Kafka)
+./pruebas.sh                 # gateways, balanceo, failover, validaciones
+./pruebas_kafka.sh           # mensajería asíncrona y lista de espera (ver sección de Kafka)
+./simulacro.sh               # "día de inscripciones": concurrencia de verdad
+./verificar_consistencia.sh  # ¿cuadran los datos entre las bases?
 ```
+
+### Simulacro de día de inscripciones
+
+`simulacro.sh` usa el grupo SIM100-01 (Taller de Concurrencia, 10 lugares), que existe solo
+para esto, y por defecto 40 alumnos nuevos:
+
+1. Los 40 piden el grupo **al mismo tiempo**. Deben entrar exactamente 10, ni uno más
+   (`SELECT ... FOR UPDATE`), y el script muestra cómo se repartieron las peticiones entre
+   las 3 instancias de inscripciones.
+2. Los 30 que no alcanzaron se forman en la lista de espera, en posiciones 1 a 30.
+3. 4 de los inscritos se dan de baja. Por Kafka, la fila avanza sola, y el script comprueba
+   que entraron **los 4 primeros de la fila**, en ese orden, y que el grupo volvió a 10/10.
+4. Corre `verificar_consistencia.sh` y deja el grupo vacío para poder repetirlo.
+
+Con otro número de alumnos: `./simulacro.sh 80`.
+
+### Verificador de consistencia
+
+Cada servicio tiene su propia base y entre bases no hay transacciones: lo único que las
+mantiene de acuerdo son las llamadas HTTP y los eventos. `verificar_consistencia.sh` lo
+comprueba con los datos reales:
+
+1. Kafka no tiene eventos pendientes (si los hay, espera hasta 20 s a que se procesen)
+2. El cupo ocupado de cada grupo, en `materias_db`, es igual al número de inscripciones
+   activas de ese grupo, en `inscripciones_db`
+3. Ningún grupo pasa de su cupo
+4. Nadie lleva dos grupos de la misma materia
+5. Nadie está inscrito y formado a la vez en el mismo grupo
+
+Sirve después de cualquier prueba, o después de apagar y prender instancias a mano a la
+mitad de una operación. Si algo no cuadra, dice exactamente qué grupo y por cuánto.
+
+### pruebas.sh
 
 `pruebas.sh` recorre once escenarios con pausas entre cada uno:
 
@@ -711,14 +861,30 @@ Por nginx salen uno o dos `502`; por Go, seis `200`.
 
 ## Datos de prueba
 
-La base se siembra con 4 alumnos, 4 materias y 6 grupos. Tres casos están preparados
-deliberadamente para demostrar validaciones y eventos:
+La base arranca con **204 alumnos, 13 materias, 22 grupos y 391 inscripciones**. Los 4
+alumnos, 4 materias y 6 grupos originales siguen igual, con los mismos ids, así que
+`pruebas.sh` y los ejemplos de siempre funcionan como antes.
 
-- El **grupo 02 de TC2027** está lleno (2 de 2), para el rechazo por cupo
-- El **grupo 01 de TC1028** y el **grupo 01 de TC2027** son ambos lunes por la mañana,
-  para el rechazo por empalme de horario
+Lo demás lo genera `db/generar_datos.py` (`python3 db/generar_datos.py` vuelve a escribir
+los archivos `10-`, `11-` y `12-` de `db/init`). Es determinístico: con la misma semilla
+genera siempre lo mismo. Lo importante es que **los lugares ocupados de cada grupo salen
+de contar las inscripciones sembradas**, así que el sistema arranca consistente y
+`verificar_consistencia.sh` pasa desde el principio. Las inscripciones sembradas respetan
+las mismas reglas que la cadena: sin empalmes, con prerrequisitos y dentro del límite de
+créditos.
+
+Casos preparados a propósito:
+
+- El **grupo 02 de TC2027** está lleno (2 de 2): rechazo por cupo y lista de espera
+- El **grupo 01 de TC1028** y el **grupo 01 de TC2027** son ambos lunes por la mañana:
+  rechazo por empalme
 - El **grupo 02 de TC1028** está en 29 de 30: una inscripción más lo llena y publica
   `grupos.llenos`
+- **Prerrequisitos**, solo en materias nuevas: TC2005 y TC3050 piden TC1028; MA2002 e
+  IN2001 piden MA1001; TC4010 pide TC1010
+- Los alumnos originales no tienen inscripciones, para que las demos empiecen limpias, pero
+  sí materias aprobadas (ver [Cómo se usa](#cómo-se-usa))
+- **SIM100-01**, vacío y en sábado, solo para `simulacro.sh`
 
 ---
 
@@ -733,9 +899,14 @@ deliberadamente para demostrar validaciones y eventos:
 - **Eventos descartados.** Si un handler falla 3 veces seguidas, el evento se registra en
   el log y se confirma para no detener la cola. En producción iría a un tópico de "cartas
   muertas" (dead letter queue) para revisarlo a mano.
-- **Duplicados en notificaciones.** Su memoria de eventos vistos es de cada instancia y se
-  pierde al reiniciar. Si un evento repetido le toca a la otra instancia, el correo sale
-  dos veces. `pruebas_kafka.sh` lo muestra en la prueba 6.
+- **La fila se puede atorar.** Si se pierde un `lugares.liberados` (doble escritura en
+  `materias`, o un evento descartado tras 3 fallos), ese lugar queda libre pero nadie de la
+  fila entra, y por la regla `validarSinFila` tampoco lo toma nadie directo. Se destraba con
+  la siguiente baja del grupo, que vuelve a intentar con la fila completa.
+- **Los avisos no expiran.** `notificaciones_db` crece sin límite; la API devuelve solo los
+  50 más recientes.
+- **El periodo de inscripción es por configuración**, igual para todos, y en hora UTC (la
+  de los contenedores). No hay periodos por carrera ni por semestre.
 - **Un solo broker, sin réplicas y sin volumen.** Si el contenedor de Kafka se cae, nadie
   puede publicar ni consumir hasta que regresa, y `docker compose down` borra los eventos
   (`kafka-init` vuelve a crear los tópicos vacíos al levantar). En producción serían 3
@@ -769,6 +940,9 @@ deliberadamente para demostrar validaciones y eventos:
 | El contenedor `kafka` se reinicia o nunca queda `healthy` | Casi siempre es memoria. Revisa `docker compose logs kafka` y libera RAM; el tope de la JVM está en `KAFKA_HEAP_OPTS` |
 | `Unknown Topic Or Partition` en el log de un servicio | El tópico no existe. Corre `docker compose up kafka-init` y revisa que termine con `exited (0)` |
 | `describe --group` dice que el grupo se está rebalanceando | Una instancia entró o salió hace un momento. Espera unos segundos y vuelve a preguntar |
+| `column "baja_en" does not exist`, `relation "lista_espera" does not exist`, o `simulacro.sh` dice que no existe SIM100 | La base es de una versión anterior: `./setup.sh --limpio` (borra los datos y siembra los nuevos) |
+| `verificar_consistencia.sh` dice que un grupo no cuadra justo después de una prueba | Si dice que hay eventos pendientes, espera unos segundos y córrelo otra vez. Si sigue sin cuadrar, revisa `docker compose logs` buscando `ADVERTENCIA`: es un evento que no salió (ver Limitaciones) |
+| El frontend no muestra los avisos | Revisa que `notificaciones-1` y `-2` estén arriba y que `curl localhost:8000/notificaciones?matricula=A01234567` conteste |
 
 ---
 
@@ -781,7 +955,7 @@ deliberadamente para demostrar validaciones y eventos:
 | Service discovery | Consul (modo dev) |
 | Mensajería | Apache Kafka 3.8, modo KRaft, un broker |
 | Base de datos | PostgreSQL 16 (Alpine) |
-| Frontend | React 18 + Vite, servido por Nginx |
+| Frontend | React 18 + Vite, un archivo de estilos propio, servido por Nginx |
 | Contenedores | Docker + Docker Compose v2 |
 
 Las imágenes de los servicios usan build multi-etapa con `CGO_ENABLED=0`, lo que produce

@@ -10,6 +10,7 @@
 #   inscripciones.creadas      inscripciones   notificaciones
 #   inscripciones.canceladas   inscripciones   materias, notificaciones
 #   grupos.llenos              materias        notificaciones
+#   lugares.liberados          materias        inscripciones (lista de espera)
 #
 # 3 particiones: hasta 3 instancias de un mismo grupo leyendo en paralelo,
 # una por replica de cada servicio. Una cuarta instancia se quedaria sin
@@ -25,6 +26,7 @@ TOPICOS=(
     inscripciones.creadas
     inscripciones.canceladas
     grupos.llenos
+    lugares.liberados
 )
 
 for topico in "${TOPICOS[@]}"; do

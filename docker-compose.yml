@@ -8,6 +8,17 @@ x-env-comun: &env-comun
   CONSUL_HTTP_ADDR: http://consul:8500
   KAFKA_BROKER: kafka:9092
 
+# Reglas de la cadena de validaciones de inscripciones. Cambiarlas y
+# recrear (docker compose up -d inscripciones-1 inscripciones-2 inscripciones-3)
+# basta para probarlas: no hay que recompilar.
+x-reglas-inscripcion: &reglas-inscripcion
+  MAX_CREDITOS: "30"
+  # Periodo de inscripcion. Vacio = siempre abierto. Formato AAAA-MM-DD o
+  # "AAAA-MM-DD HH:MM", en hora UTC (la del contenedor). Para ver el rechazo,
+  # pon una fecha ya pasada en INSCRIPCION_FIN.
+  INSCRIPCION_INICIO: ""
+  INSCRIPCION_FIN: ""
+
 x-servicio-base: &servicio-base
   restart: unless-stopped
   depends_on:
@@ -133,15 +144,13 @@ services:
       - "8093:8080"
 
   # ---------------------------------------------------------------- INSCRIPCIONES
-  # ALUMNOS_URL y MATERIAS_URL siguen apuntando a una instancia fija. Eso se
-  # arregla en el siguiente paso, cuando apunten al load balancer.
   inscripciones-1:
     <<: *servicio-base
     build: ./services/inscripciones
     image: inscripciones/inscripciones:latest
     container_name: inscripciones-1
     environment:
-      <<: *env-comun
+      <<: [*env-comun, *reglas-inscripcion]
       INSTANCE_ID: inscripciones-1
       DB_NAME: inscripciones_db
       ALUMNOS_URL: http://nginx-gateway:8000
@@ -155,7 +164,7 @@ services:
     image: inscripciones/inscripciones:latest
     container_name: inscripciones-2
     environment:
-      <<: *env-comun
+      <<: [*env-comun, *reglas-inscripcion]
       INSTANCE_ID: inscripciones-2
       DB_NAME: inscripciones_db
       ALUMNOS_URL: http://nginx-gateway:8000
@@ -169,7 +178,7 @@ services:
     image: inscripciones/inscripciones:latest
     container_name: inscripciones-3
     environment:
-      <<: *env-comun
+      <<: [*env-comun, *reglas-inscripcion]
       INSTANCE_ID: inscripciones-3
       DB_NAME: inscripciones_db
       ALUMNOS_URL: http://nginx-gateway:8000
@@ -178,9 +187,9 @@ services:
       - "8103:8080"
 
   # ---------------------------------------------------------------- NOTIFICACIONES
-  # Solo consume de Kafka: no tiene base de datos y nginx no le manda
-  # trafico. Dos instancias en el mismo consumer group se reparten las
-  # particiones de cada topico.
+  # Consume los avisos de Kafka, los guarda en notificaciones_db y los sirve
+  # en GET /notificaciones (por nginx) para que el frontend los muestre. Dos
+  # instancias en el mismo consumer group se reparten las particiones.
   notificaciones-1:
     <<: *servicio-base
     build: ./services/notificaciones
@@ -189,6 +198,7 @@ services:
     environment:
       <<: *env-comun
       INSTANCE_ID: notificaciones-1
+      DB_NAME: notificaciones_db
 
   notificaciones-2:
     <<: *servicio-base
@@ -198,6 +208,7 @@ services:
     environment:
       <<: *env-comun
       INSTANCE_ID: notificaciones-2
+      DB_NAME: notificaciones_db
 
   # ---------------------------------------------------------------- MIDDLEWARE
   middleware:
@@ -229,6 +240,30 @@ services:
     networks:
       - red_inscripciones
 
+  # ---------------------------------------------------------------- NGINX GATEWAY
+  nginx-gateway:
+    build: ./nginx-gateway
+    container_name: nginx-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    # nginx resuelve los nombres de los upstream AL ARRANCAR. Si una
+    # instancia no existe todavia, falla con "host not found in upstream".
+    depends_on:
+      - alumnos-1
+      - alumnos-2
+      - alumnos-3
+      - materias-1
+      - materias-2
+      - materias-3
+      - inscripciones-1
+      - inscripciones-2
+      - inscripciones-3
+      - notificaciones-1
+      - notificaciones-2
+    networks:
+      - red_inscripciones
+
   # ---------------------------------------------------------------- FRONTEND
   frontend:
     build:
@@ -243,28 +278,6 @@ services:
       - "3000:80"
     depends_on:
       - loadbalancer
-    networks:
-      - red_inscripciones
-
-  # ---------------------------------------------------------------- NGINX GATEWAY
-  nginx-gateway:
-    build: ./nginx-gateway
-    container_name: nginx-gateway
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    # nginx resuelve los nombres de los upstream AL ARRANCAR. Si una
-    # instancia no existe todavía, falla con "host not found in upstream".
-    depends_on:
-      - alumnos-1
-      - alumnos-2
-      - alumnos-3
-      - materias-1
-      - materias-2
-      - materias-3
-      - inscripciones-1
-      - inscripciones-2
-      - inscripciones-3
     networks:
       - red_inscripciones
 

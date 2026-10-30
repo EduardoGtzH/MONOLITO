@@ -2,17 +2,32 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"inscripciones.com/notificaciones/controllers"
 	"inscripciones.com/notificaciones/events"
 	"inscripciones.com/notificaciones/kafkax"
+	"inscripciones.com/notificaciones/models"
+
+	_ "github.com/lib/pq"
 )
 
 var instanceID = "notificaciones-desconocido"
+
+// withInstanceHeader tags every response with X-Instance-Id, como los demas
+// servicios: asi la bitacora del frontend muestra que instancia contesto.
+func withInstanceHeader(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Instance-Id", instanceID)
+		next(w, r)
+	}
+}
 
 // heartbeatHandler lo consulta Consul cada 5 s (ver consul.go).
 func heartbeatHandler(w http.ResponseWriter, r *http.Request) {
@@ -20,12 +35,40 @@ func heartbeatHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("notificaciones alive: " + instanceID))
 }
 
+// conectarDB retries the connection because the service container can start
+// before Postgres finishes its init scripts.
+func conectarDB(connStr string) *sql.DB {
+	for intento := 1; intento <= 15; intento++ {
+		db, err := sql.Open("postgres", connStr)
+		if err == nil {
+			if err = db.Ping(); err == nil {
+				log.Println("conectado a la base de datos")
+				return db
+			}
+			db.Close()
+		}
+		log.Printf("base de datos no lista (intento %d/15): %v", intento, err)
+		time.Sleep(2 * time.Second)
+	}
+	log.Fatal("no se pudo conectar a la base de datos")
+	return nil
+}
+
 func main() {
 	if v := os.Getenv("INSTANCE_ID"); v != "" {
 		instanceID = v
 	}
 
-	controller := controllers.NewNotificacionController(instanceID)
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		os.Getenv("DB_HOST"), os.Getenv("DB_PORT"), os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"), os.Getenv("DB_NAME"))
+	db := conectarDB(connStr)
+	defer db.Close()
+
+	controller := &controllers.NotificacionController{
+		Instancia: instanceID,
+		Model:     &models.NotificacionModel{DB: db},
+	}
 
 	// Las colas que escucha este servicio: una goroutine por topico, todas
 	// en el mismo consumer group. Asi las dos instancias de notificaciones
@@ -49,7 +92,9 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/heartbeat", heartbeatHandler)
+	mux.HandleFunc("/notificaciones", withInstanceHeader(controller.NotificacionesHandler))
+	mux.HandleFunc("/notificaciones/coordinacion", withInstanceHeader(controller.CoordinacionHandler))
+	mux.HandleFunc("/heartbeat", withInstanceHeader(heartbeatHandler))
 
 	// Igual que en los otros servicios: registro en Consul y servidor HTTP.
 	// Se queda aqui hasta que llega SIGTERM (docker stop).

@@ -31,11 +31,21 @@ func responderError(w http.ResponseWriter, err error) {
 		errors.Is(err, models.ErrInscripcionNoEncontrada):
 		http.Error(w, err.Error(), http.StatusNotFound)
 
+	case errors.Is(err, models.ErrNoEnFila):
+		http.Error(w, err.Error(), http.StatusNotFound)
+
 	case errors.Is(err, models.ErrAlumnoInactivo),
 		errors.Is(err, models.ErrYaInscrito),
 		errors.Is(err, models.ErrMateriaRepetida),
 		errors.Is(err, models.ErrEmpalme),
-		errors.Is(err, models.ErrSinCupo):
+		errors.Is(err, models.ErrSinCupo),
+		errors.Is(err, models.ErrFueraDePeriodo),
+		errors.Is(err, models.ErrYaAprobada),
+		errors.Is(err, models.ErrPrerrequisito),
+		errors.Is(err, models.ErrCreditos),
+		errors.Is(err, models.ErrHayFila),
+		errors.Is(err, models.ErrGrupoConLugar),
+		errors.Is(err, models.ErrYaEnFila):
 		http.Error(w, err.Error(), http.StatusConflict)
 
 	case errors.Is(err, connectors.ErrServicioCaido):
@@ -53,8 +63,9 @@ type peticionInscripcion struct {
 
 // InscripcionesHandler serves the collection: /inscripciones
 //
-//	POST /inscripciones            -> enroll
-//	GET  /inscripciones?matricula= -> list a student's enrollments
+//	POST /inscripciones                        -> enroll
+//	GET  /inscripciones?matricula=             -> list a student's enrollments
+//	GET  /inscripciones?matricula=&historial=1 -> todas, tambien las dadas de baja
 func (c *InscripcionController) InscripcionesHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -63,7 +74,13 @@ func (c *InscripcionController) InscripcionesHandler(w http.ResponseWriter, r *h
 			http.Error(w, "falta el parametro 'matricula'", http.StatusBadRequest)
 			return
 		}
-		lista, err := c.Proceso.Model.GetByMatricula(matricula)
+		var lista []models.Inscripcion
+		var err error
+		if r.URL.Query().Get("historial") != "" {
+			lista, err = c.Proceso.Model.GetHistorial(matricula)
+		} else {
+			lista, err = c.Proceso.Model.GetByMatricula(matricula)
+		}
 		if err != nil {
 			responderError(w, err)
 			return

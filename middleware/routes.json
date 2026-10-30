@@ -1,7 +1,9 @@
 {
   "servicios": {
     "alumnos": {
-      "prefijos": ["/alumnos"],
+      "prefijos": [
+        "/alumnos"
+      ],
       "instancias": [
         "http://alumnos-1:8080",
         "http://alumnos-2:8080",
@@ -9,7 +11,10 @@
       ]
     },
     "materias": {
-      "prefijos": ["/materias", "/grupos"],
+      "prefijos": [
+        "/materias",
+        "/grupos"
+      ],
       "instancias": [
         "http://materias-1:8080",
         "http://materias-2:8080",
@@ -17,11 +22,23 @@
       ]
     },
     "inscripciones": {
-      "prefijos": ["/inscripciones"],
+      "prefijos": [
+        "/inscripciones",
+        "/lista-espera"
+      ],
       "instancias": [
         "http://inscripciones-1:8080",
         "http://inscripciones-2:8080",
         "http://inscripciones-3:8080"
+      ]
+    },
+    "notificaciones": {
+      "prefijos": [
+        "/notificaciones"
+      ],
+      "instancias": [
+        "http://notificaciones-1:8080",
+        "http://notificaciones-2:8080"
       ]
     }
   }

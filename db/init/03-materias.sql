@@ -24,6 +24,21 @@ CREATE TABLE grupos (
 
 CREATE INDEX idx_grupos_materia ON grupos(materia_id);
 
+-- materia_id requiere haber aprobado requiere_id.
+CREATE TABLE prerrequisitos (
+    materia_id  INTEGER NOT NULL REFERENCES materias(id) ON DELETE CASCADE,
+    requiere_id INTEGER NOT NULL REFERENCES materias(id) ON DELETE CASCADE,
+    PRIMARY KEY (materia_id, requiere_id),
+    CHECK (materia_id <> requiere_id)
+);
+
+-- Eventos de Kafka que materias ya proceso (ver models/eventos_model.go).
+-- El servicio tambien la crea al arrancar, para bases que ya existian.
+CREATE TABLE eventos_procesados (
+    evento_id    VARCHAR(36) PRIMARY KEY,
+    procesado_en TIMESTAMP   NOT NULL DEFAULT NOW()
+);
+
 INSERT INTO materias (clave, nombre, creditos, carrera) VALUES
     ('TC1028', 'Estructuras de Datos',      8, 'Ingeniería en Sistemas'),
     ('TC2027', 'Cómputo Distribuido',       8, 'Ingeniería en Sistemas'),

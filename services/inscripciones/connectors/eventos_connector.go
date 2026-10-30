@@ -27,15 +27,16 @@ func NewEventosConnector(brokers []string) *EventosConnector {
 
 // InscripcionCreada publica en inscripciones.creadas. La clave es la
 // matricula: los eventos de un mismo alumno caen en la misma particion y se
-// leen en orden.
-func (c *EventosConnector) InscripcionCreada(id int, matricula string, grupoID int, clave string) error {
+// leen en orden. desdeLista dice si entro solo desde la lista de espera.
+func (c *EventosConnector) InscripcionCreada(id int, matricula string, grupoID int, clave string, desdeLista bool) error {
 	evento := events.InscripcionCreada{
-		EventoID:      uuid.NewString(),
-		InscripcionID: id,
-		Matricula:     matricula,
-		GrupoID:       grupoID,
-		MateriaClave:  clave,
-		Fecha:         time.Now().UTC(),
+		EventoID:         uuid.NewString(),
+		InscripcionID:    id,
+		Matricula:        matricula,
+		GrupoID:          grupoID,
+		MateriaClave:     clave,
+		DesdeListaEspera: desdeLista,
+		Fecha:            time.Now().UTC(),
 	}
 	return kafkax.Publish(c.creadas, matricula, evento)
 }

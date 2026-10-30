@@ -14,6 +14,7 @@ type Inscripcion struct {
 	MateriaClave string `json:"materia_clave"`
 	Estado       string `json:"estado"`
 	InscritoEn   string `json:"inscrito_en"`
+	BajaEn       string `json:"baja_en,omitempty"` // vacio mientras siga activa
 }
 
 type InscripcionModel struct {
@@ -48,6 +49,32 @@ func (m *InscripcionModel) GetByMatricula(matricula string) ([]Inscripcion, erro
 	return lista, rows.Err()
 }
 
+// GetHistorial returns every enrollment of a student, active or dropped,
+// newest first. Dropped rows are never deleted, so the history is complete.
+func (m *InscripcionModel) GetHistorial(matricula string) ([]Inscripcion, error) {
+	query := `SELECT ` + columnas + `, COALESCE(TO_CHAR(baja_en, 'YYYY-MM-DD HH24:MI'), '')
+	          FROM inscripciones WHERE matricula = $1
+	          ORDER BY inscrito_en DESC, id DESC`
+
+	rows, err := m.DB.Query(query, matricula)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	lista := make([]Inscripcion, 0)
+	for rows.Next() {
+		var i Inscripcion
+		err := rows.Scan(&i.ID, &i.Matricula, &i.GrupoID, &i.MateriaClave,
+			&i.Estado, &i.InscritoEn, &i.BajaEn)
+		if err != nil {
+			return nil, err
+		}
+		lista = append(lista, i)
+	}
+	return lista, rows.Err()
+}
+
 // Create writes the enrollment row. The seat was already claimed in the
 // materias service by the time this runs.
 func (m *InscripcionModel) Create(matricula string, grupoID int, clave string) (*Inscripcion, error) {
@@ -71,13 +98,14 @@ func (m *InscripcionModel) Create(matricula string, grupoID int, clave string) (
 // necesita el id y la materia, y asi no hace falta un SELECT aparte.
 func (m *InscripcionModel) Baja(matricula string, grupoID int) (*Inscripcion, error) {
 	i := Inscripcion{Matricula: matricula, GrupoID: grupoID}
-	query := `UPDATE inscripciones SET estado = 'DADA_DE_BAJA'
+	query := `UPDATE inscripciones SET estado = 'DADA_DE_BAJA', baja_en = NOW()
 	          WHERE matricula = $1 AND grupo_id = $2 AND estado = 'ACTIVA'
 	          RETURNING id, materia_clave, estado,
-	                    TO_CHAR(inscrito_en, 'YYYY-MM-DD HH24:MI')`
+	                    TO_CHAR(inscrito_en, 'YYYY-MM-DD HH24:MI'),
+	                    TO_CHAR(baja_en, 'YYYY-MM-DD HH24:MI')`
 
 	err := m.DB.QueryRow(query, matricula, grupoID).
-		Scan(&i.ID, &i.MateriaClave, &i.Estado, &i.InscritoEn)
+		Scan(&i.ID, &i.MateriaClave, &i.Estado, &i.InscritoEn, &i.BajaEn)
 	if err != nil {
 		// Sin fila que cambiar: no habia una inscripcion activa.
 		if err == sql.ErrNoRows {

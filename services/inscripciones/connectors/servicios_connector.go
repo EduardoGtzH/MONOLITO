@@ -24,6 +24,8 @@ type AlumnoRemoto struct {
 	Nombre    string `json:"nombre"`
 	Carrera   string `json:"carrera"`
 	Activo    bool   `json:"activo"`
+
+	Aprobadas []string `json:"aprobadas"` // claves de materias ya aprobadas
 }
 
 // GrupoRemoto mirrors the fields needed to validate schedule and seats.
@@ -36,6 +38,9 @@ type GrupoRemoto struct {
 	HoraFin      string `json:"hora_fin"`
 	CupoMaximo   int    `json:"cupo_maximo"`
 	CupoOcupado  int    `json:"cupo_ocupado"`
+
+	Creditos int      `json:"creditos"` // de la materia del grupo
+	Requiere []string `json:"requiere"` // prerrequisitos de la materia
 }
 
 // ServiciosConnector holds the base URLs of the services this one depends on.

@@ -219,7 +219,7 @@ esperar "http://localhost:3000"           "Frontend"
 # ya termino, porque dependen de el.
 TOPICOS=$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
     --bootstrap-server localhost:9092 --list 2>/dev/null | grep -c "\." || true)
-if [[ "$TOPICOS" -ge 4 ]]; then
+if [[ "$TOPICOS" -ge 5 ]]; then
     ok "Kafka con sus $TOPICOS topicos"
 else
     error "Kafka no tiene los topicos. Revisa: docker compose logs kafka-init"
@@ -228,10 +228,10 @@ fi
 # El middleware necesita un ciclo de heartbeat para marcar todo sano.
 sleep 6
 SANAS=$(curl -s http://localhost:8600/status | grep -oP '"sanas":\s*\K\d+' || echo 0)
-if [[ "$SANAS" == "9" ]]; then
-    ok "Las 9 instancias están sanas"
+if [[ "$SANAS" == "11" ]]; then
+    ok "Las 11 instancias están sanas"
 else
-    aviso "Solo $SANAS de 9 instancias sanas. Espera unos segundos y revisa /status."
+    aviso "Solo $SANAS de 11 instancias sanas. Espera unos segundos y revisa /status."
 fi
 
 # ---------------------------------------------------------------- 7. Resumen
@@ -246,6 +246,8 @@ echo "  Middleware            http://localhost:8600/status"
 echo "  Kafka                 docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"
 echo ""
 echo "  Verificación automática:  ./pruebas.sh  y  ./pruebas_kafka.sh"
+echo "  Día de inscripciones:     ./simulacro.sh"
+echo "  ¿Cuadran los datos?:      ./verificar_consistencia.sh"
 echo "  O prueba a mano:          abre http://localhost:3000"
 echo "  Endpoints documentados en README.md"
 echo ""

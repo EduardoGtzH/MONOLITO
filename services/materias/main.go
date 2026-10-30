@@ -84,7 +84,10 @@ func main() {
 		MateriaModel: materiaModel,
 		Eventos:      eventos,
 	}
-	eventosController := &controllers.EventosController{MateriaModel: materiaModel}
+	eventosController := &controllers.EventosController{
+		MateriaModel: materiaModel,
+		Eventos:      eventos,
+	}
 
 	// Consumidor: grupo "materias" sobre inscripciones.canceladas. Las 3
 	// instancias usan el mismo grupo, asi que cada baja la procesa solo una.

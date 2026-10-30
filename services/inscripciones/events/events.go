@@ -15,6 +15,7 @@ const (
 	TopicoInscripcionesCreadas    = "inscripciones.creadas"    // publica: inscripciones
 	TopicoInscripcionesCanceladas = "inscripciones.canceladas" // publica: inscripciones
 	TopicoGruposLlenos            = "grupos.llenos"            // publica: materias
+	TopicoLugaresLiberados        = "lugares.liberados"        // publica: materias
 )
 
 // Consumer groups. Cada uno es una cola independiente: cada grupo recibe su
@@ -22,7 +23,8 @@ const (
 // el trabajo.
 const (
 	ConsumidorMaterias       = "materias"       // lee: inscripciones.canceladas
-	ConsumidorNotificaciones = "notificaciones" // lee: los cuatro topicos
+	ConsumidorNotificaciones = "notificaciones" // lee: los cuatro topicos de avisos
+	ConsumidorInscripciones  = "inscripciones"  // lee: lugares.liberados (lista de espera)
 )
 
 // AlumnoRegistrado: se dio de alta un alumno nuevo.
@@ -35,14 +37,16 @@ type AlumnoRegistrado struct {
 	Fecha     time.Time `json:"fecha"`
 }
 
-// InscripcionCreada: un alumno quedo inscrito en un grupo.
+// InscripcionCreada: un alumno quedo inscrito en un grupo. DesdeListaEspera
+// dice si entro solo, porque se libero un lugar y era el primero de la fila.
 type InscripcionCreada struct {
-	EventoID      string    `json:"evento_id"`
-	InscripcionID int       `json:"inscripcion_id"`
-	Matricula     string    `json:"matricula"`
-	GrupoID       int       `json:"grupo_id"`
-	MateriaClave  string    `json:"materia_clave"`
-	Fecha         time.Time `json:"fecha"`
+	EventoID         string    `json:"evento_id"`
+	InscripcionID    int       `json:"inscripcion_id"`
+	Matricula        string    `json:"matricula"`
+	GrupoID          int       `json:"grupo_id"`
+	MateriaClave     string    `json:"materia_clave"`
+	DesdeListaEspera bool      `json:"desde_lista_espera"`
+	Fecha            time.Time `json:"fecha"`
 }
 
 // InscripcionCancelada: un alumno se dio de baja de un grupo. El servicio de
@@ -63,5 +67,15 @@ type GrupoLleno struct {
 	MateriaClave string    `json:"materia_clave"`
 	Numero       string    `json:"numero"`
 	CupoMaximo   int       `json:"cupo_maximo"`
+	Fecha        time.Time `json:"fecha"`
+}
+
+// LugarLiberado: materias YA devolvio un lugar del grupo (lo publica despues
+// de bajar el contador, no antes). Inscripciones lo escucha para inscribir al
+// primero de la lista de espera.
+type LugarLiberado struct {
+	EventoID     string    `json:"evento_id"`
+	GrupoID      int       `json:"grupo_id"`
+	MateriaClave string    `json:"materia_clave"`
 	Fecha        time.Time `json:"fecha"`
 }

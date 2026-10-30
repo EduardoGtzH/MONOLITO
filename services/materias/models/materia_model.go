@@ -25,16 +25,22 @@ type Grupo struct {
 	HoraFin      string `json:"hora_fin"`
 	CupoMaximo   int    `json:"cupo_maximo"`
 	CupoOcupado  int    `json:"cupo_ocupado"`
+
+	// Datos de la materia que inscripciones necesita para validar: los
+	// creditos (limite por semestre) y los prerrequisitos.
+	Creditos int      `json:"creditos"`
+	Requiere []string `json:"requiere"`
 }
 
 // Materia is the course itself; the seats live in its grupos.
 type Materia struct {
-	ID       int     `json:"id"`
-	Clave    string  `json:"clave"`
-	Nombre   string  `json:"nombre"`
-	Creditos int     `json:"creditos"`
-	Carrera  string  `json:"carrera"`
-	Grupos   []Grupo `json:"grupos"`
+	ID       int      `json:"id"`
+	Clave    string   `json:"clave"`
+	Nombre   string   `json:"nombre"`
+	Creditos int      `json:"creditos"`
+	Carrera  string   `json:"carrera"`
+	Requiere []string `json:"requiere"` // claves que hay que haber aprobado
+	Grupos   []Grupo  `json:"grupos"`
 }
 
 type MateriaModel struct {
@@ -61,7 +67,12 @@ func (m *MateriaModel) GetCatalogo() ([]Materia, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return escanearCatalogo(rows)
+
+	materias, err := escanearCatalogo(rows)
+	if err != nil {
+		return nil, err
+	}
+	return m.completarRequisitos(materias)
 }
 
 // GetByClave returns a single course with its sections.
@@ -79,7 +90,54 @@ func (m *MateriaModel) GetByClave(clave string) (*Materia, error) {
 	if len(materias) == 0 {
 		return nil, ErrMateriaNoEncontrada
 	}
+	materias, err = m.completarRequisitos(materias)
+	if err != nil {
+		return nil, err
+	}
 	return &materias[0], nil
+}
+
+// requisitos devuelve, por id de materia, las claves que pide aprobadas.
+func (m *MateriaModel) requisitos() (map[int][]string, error) {
+	rows, err := m.DB.Query(`
+		SELECT p.materia_id, r.clave
+		FROM prerrequisitos p JOIN materias r ON r.id = p.requiere_id
+		ORDER BY r.clave`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	porMateria := make(map[int][]string)
+	for rows.Next() {
+		var id int
+		var clave string
+		if err := rows.Scan(&id, &clave); err != nil {
+			return nil, err
+		}
+		porMateria[id] = append(porMateria[id], clave)
+	}
+	return porMateria, rows.Err()
+}
+
+// completarRequisitos llena Requiere en cada materia y en sus grupos.
+func (m *MateriaModel) completarRequisitos(materias []Materia) ([]Materia, error) {
+	porMateria, err := m.requisitos()
+	if err != nil {
+		return nil, err
+	}
+	for i := range materias {
+		req := porMateria[materias[i].ID]
+		if req == nil {
+			req = []string{}
+		}
+		materias[i].Requiere = req
+		for j := range materias[i].Grupos {
+			materias[i].Grupos[j].Creditos = materias[i].Creditos
+			materias[i].Grupos[j].Requiere = req
+		}
+	}
+	return materias, nil
 }
 
 // escanearCatalogo collapses the JOIN result into a slice of materias.
@@ -134,18 +192,27 @@ func (m *MateriaModel) GetGrupo(id int) (*Grupo, error) {
 		SELECT g.id, g.materia_id, m.clave, g.numero, g.profesor, g.dia,
 		       TO_CHAR(g.hora_inicio, 'HH24:MI'),
 		       TO_CHAR(g.hora_fin, 'HH24:MI'),
-		       g.cupo_maximo, g.cupo_ocupado
+		       g.cupo_maximo, g.cupo_ocupado, m.creditos
 		FROM grupos g JOIN materias m ON m.id = g.materia_id
 		WHERE g.id = $1`
 
 	err := m.DB.QueryRow(query, id).Scan(&g.ID, &g.MateriaID, &g.MateriaClave,
 		&g.Numero, &g.Profesor, &g.Dia, &g.HoraInicio, &g.HoraFin,
-		&g.CupoMaximo, &g.CupoOcupado)
+		&g.CupoMaximo, &g.CupoOcupado, &g.Creditos)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrGrupoNoEncontrado
 		}
 		return nil, err
+	}
+
+	porMateria, err := m.requisitos()
+	if err != nil {
+		return nil, err
+	}
+	g.Requiere = porMateria[g.MateriaID]
+	if g.Requiere == nil {
+		g.Requiere = []string{}
 	}
 	return g, nil
 }

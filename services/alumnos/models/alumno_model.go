@@ -5,8 +5,8 @@ import (
 	"fmt"
 )
 
-// Alumno is the resource this service owns. The json tags define exactly
-// what the API returns; the db columns are read by hand in each query below.
+// Alumno is the resource this service owns. The json tags control how it
+// is serialized in the API responses.
 type Alumno struct {
 	ID               int    `json:"id"`
 	Matricula        string `json:"matricula"`
@@ -15,14 +15,14 @@ type Alumno struct {
 	Semestre         int    `json:"semestre"`
 	CreditosCursados int    `json:"creditos_cursados"`
 	Activo           bool   `json:"activo"`
+
+	// Claves de las materias que ya aprobo. Solo viene al pedir un alumno
+	// (GET /alumnos/{matricula}): inscripciones la usa para los prerrequisitos.
+	Aprobadas []string `json:"aprobadas,omitempty"`
 }
 
 // AlumnoModel is the M in MVC: it holds the database handle and is the only
-// place in this service where SQL is written.
-//
-// *sql.DB is already a connection pool and is safe for concurrent use, so the
-// goroutine net/http spawns per request can share this single instance without
-// any mutex of our own.
+// place in this service where SQL is written. Controllers never touch the DB.
 type AlumnoModel struct {
 	DB *sql.DB
 }
@@ -39,7 +39,7 @@ func (m *AlumnoModel) GetAll() ([]Alumno, error) {
 	}
 	defer rows.Close()
 
-	alumnos := []Alumno{}
+	alumnos := make([]Alumno, 0)
 	for rows.Next() {
 		var a Alumno
 		err := rows.Scan(&a.ID, &a.Matricula, &a.Nombre, &a.Carrera,
@@ -52,8 +52,8 @@ func (m *AlumnoModel) GetAll() ([]Alumno, error) {
 	return alumnos, rows.Err()
 }
 
-// GetByMatricula looks a student up by their school ID. This is the method
-// the inscripciones service calls over HTTP to verify a student exists.
+// GetByMatricula is the endpoint the inscripciones service calls over HTTP
+// to verify a student exists before enrolling them.
 func (m *AlumnoModel) GetByMatricula(matricula string) (*Alumno, error) {
 	alumno := &Alumno{}
 	query := `SELECT ` + columnas + ` FROM alumnos WHERE matricula = $1`
@@ -63,68 +63,49 @@ func (m *AlumnoModel) GetByMatricula(matricula string) (*Alumno, error) {
 		&alumno.CreditosCursados, &alumno.Activo)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("alumno no encontrado")
+			return nil, fmt.Errorf("alumno %s no encontrado", matricula)
 		}
+		return nil, err
+	}
+
+	alumno.Aprobadas, err = m.materiasAprobadas(matricula)
+	if err != nil {
 		return nil, err
 	}
 	return alumno, nil
 }
 
-// Create inserts a student and returns it with the id Postgres assigned.
-// RETURNING does the insert and the read in a single round trip.
+// materiasAprobadas lee el historial academico del alumno.
+func (m *AlumnoModel) materiasAprobadas(matricula string) ([]string, error) {
+	rows, err := m.DB.Query(`SELECT materia_clave FROM materias_aprobadas
+	                         WHERE matricula = $1 ORDER BY materia_clave`, matricula)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	claves := make([]string, 0)
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		claves = append(claves, c)
+	}
+	return claves, rows.Err()
+}
+
+// Create inserts a new student. RETURNING lets Postgres hand back the
+// generated id in the same round trip instead of a second SELECT.
 func (m *AlumnoModel) Create(a Alumno) (*Alumno, error) {
 	query := `INSERT INTO alumnos (matricula, nombre, carrera, semestre, creditos_cursados)
 	          VALUES ($1, $2, $3, $4, $5)
-	          RETURNING ` + columnas
+	          RETURNING id, activo`
 
-	nuevo := &Alumno{}
 	err := m.DB.QueryRow(query, a.Matricula, a.Nombre, a.Carrera,
-		a.Semestre, a.CreditosCursados).Scan(&nuevo.ID, &nuevo.Matricula,
-		&nuevo.Nombre, &nuevo.Carrera, &nuevo.Semestre,
-		&nuevo.CreditosCursados, &nuevo.Activo)
+		a.Semestre, a.CreditosCursados).Scan(&a.ID, &a.Activo)
 	if err != nil {
 		return nil, err
 	}
-	return nuevo, nil
-}
-
-// Update changes the mutable fields of a student.
-func (m *AlumnoModel) Update(matricula string, a Alumno) (*Alumno, error) {
-	query := `UPDATE alumnos
-	          SET nombre = $1, carrera = $2, semestre = $3, creditos_cursados = $4
-	          WHERE matricula = $5 AND activo = TRUE
-	          RETURNING ` + columnas
-
-	actualizado := &Alumno{}
-	err := m.DB.QueryRow(query, a.Nombre, a.Carrera, a.Semestre,
-		a.CreditosCursados, matricula).Scan(&actualizado.ID, &actualizado.Matricula,
-		&actualizado.Nombre, &actualizado.Carrera, &actualizado.Semestre,
-		&actualizado.CreditosCursados, &actualizado.Activo)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("alumno no encontrado")
-		}
-		return nil, err
-	}
-	return actualizado, nil
-}
-
-// Delete is a soft delete: we flip activo to false instead of removing the
-// row, because inscripciones in another database still reference this
-// matricula and there is no foreign key across services to protect us.
-func (m *AlumnoModel) Delete(matricula string) error {
-	query := `UPDATE alumnos SET activo = FALSE WHERE matricula = $1 AND activo = TRUE`
-
-	res, err := m.DB.Exec(query, matricula)
-	if err != nil {
-		return err
-	}
-	filas, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if filas == 0 {
-		return fmt.Errorf("alumno no encontrado")
-	}
-	return nil
+	return &a, nil
 }
